@@ -2,6 +2,8 @@
 
 `:Tutor` do terminal + puzzles com rating, estilo chess.com — puro Python, zero deps.
 
+![Um puzzle do xeque no meio da tentativa](docs/xeque.png)
+
 Cada desafio monta uma **arena descartável** em `/tmp` e abre um **bash de verdade**
 lá dentro. Você resolve com comandos reais; o xeque confere o resultado
 (arquivos, pasta onde você parou, ou a resposta que você deu).

@@ -1,0 +1,31 @@
+{
+  "licoes": "licoes.md",
+  "puzzles": "puzzles.md",
+  "rating_inicial": 800,
+  "k": 32,
+  "k_provisorio": 64,
+  "jogos_provisorios": 10,
+  "peso_dica": 0.25,
+  "peso_erro": 0.15,
+  "nota_minima": 0.3,
+  "janela_escolha": 3,
+  "peso_repeticao": 0.2,
+  "peso_repeticao_perda": 1.5,
+  "nativo": "nativo.md",
+  "fichas": "fichas.md",
+  "rating_inicial_nativo": 400,
+  "desbloqueio": {"limpos": 5, "janela": 7},
+  "sempre": ["clear"],
+  "trilha": [
+    {"nome": "andar", "camada": "busybox", "cmds": ["ls", "mkdir", "touch", "cat"]},
+    {"nome": "mexer", "camada": "busybox", "cmds": ["cp", "mv", "rm", "rmdir", "ln"]},
+    {"nome": "olhar", "camada": "busybox", "cmds": ["head", "tail", "less", "more", "wc"]},
+    {"nome": "filtrar", "camada": "busybox", "cmds": ["grep", "sort", "uniq", "cut", "tr"]},
+    {"nome": "achar", "camada": "busybox", "cmds": ["find", "xargs"]},
+    {"nome": "editar", "camada": "busybox", "cmds": ["vi", "sed"]},
+    {"nome": "processar", "camada": "busybox", "cmds": ["awk", "expr", "basename", "dirname", "date"]},
+    {"nome": "scripts", "camada": "busybox", "cmds": ["sh", "chmod"]},
+    {"nome": "sistema", "camada": "busybox", "cmds": ["ps", "kill", "df", "du", "tar", "gzip", "gunzip"]},
+    {"nome": "gnu", "camada": "gnu", "cmds": ["man", "file", "stat", "diff", "column"]}
+  ]
+}

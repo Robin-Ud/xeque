@@ -1,0 +1,10 @@
+# dados de quem joga: ficam só na máquina
+historico.csv*
+tentativas.jsonl
+atual.json
+shell_hist*
+fichas_lidas.txt
+# personalização local (tema próprio, ajustes): o git pull nunca mexe
+configs.local.json
+tema/
+__pycache__/

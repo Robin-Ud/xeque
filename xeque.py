@@ -18,17 +18,20 @@ import time
 from datetime import date, datetime, timedelta
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
-HIST_CSV = os.path.join(DATA_DIR, 'historico.csv')
+# Tudo de quem joga mora em pessoal/ (fora do git; no note do Matheus é symlink pro
+# ~/.pessoal). O resto do DATA_DIR é o que vem do `xeque atualizar`.
+PESSOAL = os.path.join(DATA_DIR, 'pessoal')
+HIST_CSV = os.path.join(PESSOAL, 'historico.csv')
 # Rastros pro tutor (Claude): o puzzle aberto agora e os comandos de cada tentativa.
-ATUAL_JSON = os.path.join(DATA_DIR, 'atual.json')
-TENT_JSONL = os.path.join(DATA_DIR, 'tentativas.jsonl')
+ATUAL_JSON = os.path.join(PESSOAL, 'atual.json')
+TENT_JSONL = os.path.join(PESSOAL, 'tentativas.jsonl')
 # ↑ entre puzzles: o bash carrega isto na memória, mas só grava em ctl/hist
 # (o check `usou` e o cmds da tentativa continuam vendo só o puzzle atual).
-SHELL_HIST = os.path.join(DATA_DIR, 'shell_hist')
-SHELL_HIST_NATIVO = os.path.join(DATA_DIR, 'shell_hist_nativo')
+SHELL_HIST = os.path.join(PESSOAL, 'shell_hist')
+SHELL_HIST_NATIVO = os.path.join(PESSOAL, 'shell_hist_nativo')
 SHELL_HIST_MAX = 2000
 # Fichas que você já passou no leitor ou abriu pelo nome: o leitor retoma da primeira que falta.
-FICHAS_LIDAS = os.path.join(DATA_DIR, 'fichas_lidas.txt')
+FICHAS_LIDAS = os.path.join(PESSOAL, 'fichas_lidas.txt')
 CAMPOS = ['data_hora', 'modo', 'id', 'rating_item', 'resultado', 'tentativas',
           'dicas', 'segundos', 'comandos', 'rating_antes', 'rating_depois']
 META_CMDS = {'pronto', 'dica', 'meta', 'reset', 'desisto', 'responder', 'ficha', 'exit'}
@@ -53,12 +56,26 @@ def load_json(name: str) -> dict:
         return json.load(f)
 
 def carregar_cfg() -> dict:
-    """configs.json (vem do git) com configs.local.json por cima (fica só nesta
-    máquina: tema, ajustes pessoais). Um `git pull` nunca briga com o local."""
+    """configs.json (vem do git) com pessoal/configs.json por cima (fica só nesta
+    máquina: tema, ajustes pessoais). Um `git pull` nunca briga com o pessoal."""
     cfg = load_json('configs.json')
-    if os.path.exists(os.path.join(DATA_DIR, 'configs.local.json')):
-        cfg.update(load_json('configs.local.json'))
+    if os.path.exists(os.path.join(PESSOAL, 'configs.json')):
+        cfg.update(load_json(os.path.join(PESSOAL, 'configs.json')))
     return cfg
+
+# antes de pessoal/ o estado ficava solto na raiz (e o config se chamava configs.local.json)
+LEGADO = {n: n for n in ('historico.csv', 'historico.csv.bak', 'tentativas.jsonl', 'atual.json',
+                         'shell_hist', 'shell_hist_nativo', 'fichas_lidas.txt', 'tema')}
+LEGADO['configs.local.json'] = 'configs.json'
+
+def migrar_pessoal() -> None:
+    """Leva o estado da raiz pra pessoal/. Só move o que ainda não existe lá:
+    rodar de novo (ou com pessoal/ já preenchido) não sobrescreve nada."""
+    os.makedirs(PESSOAL, exist_ok=True)
+    for velho, novo in LEGADO.items():
+        de, para = os.path.join(DATA_DIR, velho), os.path.join(PESSOAL, novo)
+        if os.path.lexists(de) and not os.path.lexists(para):
+            shutil.move(de, para)
 
 def read_hist() -> list[dict]:
     try:
@@ -136,8 +153,10 @@ def carregar_itens(cfg: dict, chave: str) -> list[dict]:
     o mesmo id (mesma ordem, histórico continua valendo); id só do tema vai pro fim;
     item novo do base aparece neutro até alguém tematizar."""
     base = parse_itens(cfg[chave])
-    tema = os.path.join(cfg.get('tema') or '', cfg[chave])
-    if not cfg.get('tema') or not os.path.exists(os.path.join(DATA_DIR, tema)):
+    if not cfg.get('tema'):
+        return base
+    tema = os.path.join(PESSOAL, os.path.expanduser(cfg['tema']), cfg[chave])
+    if not os.path.exists(tema):
         return base
     troca = {it['id']: it for it in parse_itens(tema)}
     ids = {it['id'] for it in base}
@@ -378,7 +397,7 @@ def ler_ctl(ctl: str, nome: str, padrao: str = '') -> str:
         return padrao
 
 def guardar_shell_hist(novos: str, arquivo: str) -> None:
-    linhas = ler_ctl(DATA_DIR, os.path.basename(arquivo)).splitlines()
+    linhas = ler_ctl(PESSOAL, os.path.basename(arquivo)).splitlines()
     linhas += [l for l in novos.splitlines() if l.strip()]
     with open(arquivo, 'w', encoding='utf-8') as f:
         f.write(''.join(l + '\n' for l in linhas[-SHELL_HIST_MAX:]))
@@ -949,7 +968,7 @@ def tela_rever(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fich
 
 def atualizar() -> None:
     """git pull do motor e do conteúdo base. Seus dados (histórico, tema,
-    configs.local.json) ficam fora do git e não são tocados."""
+    configs) ficam em pessoal/, fora do git, e não são tocados."""
     antes = subprocess.run(['git', '-C', DATA_DIR, 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
     if subprocess.run(['git', '-C', DATA_DIR, 'pull', '--ff-only', '-q']).returncode != 0:
         print(f"{C['r']}não deu pra atualizar{C['0']} — mexeu em algum arquivo do git? `git -C {DATA_DIR} status`")
@@ -958,6 +977,7 @@ def atualizar() -> None:
     print(f"{C['g']}xeque atualizado.{C['0']}")
 
 def main() -> None:
+    migrar_pessoal()
     cfg = carregar_cfg()
     licoes = carregar_itens(cfg, 'licoes')
     puzzles = carregar_itens(cfg, 'puzzles')

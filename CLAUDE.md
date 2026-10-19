@@ -7,7 +7,7 @@ Pra quem joga aprender shell fazendo — não resolver por ele. Repo público
 ## Rodar
 ```bash
 xeque                 # symlink ~/.local/bin/xeque → xeque.sh
-./xeque_test.sh       # teste isolado em /tmp (não toca historico.csv)
+./xeque_test.sh       # teste isolado em /tmp (não toca o pessoal/)
 ./xeque.sh validar    # só o conteúdo
 ```
 
@@ -18,14 +18,17 @@ licoes.md       ← tutor (livre), ordem = ordem do arquivo
 puzzles.md      ← puzzles (livre), `## id · rating · título`
 nativo.md       ← trilha (nativo): lições e puzzles com `> etapa: N`
 fichas.md       ← `## cmd · ano`, `> etapa: N`, `> resumo:`: história + camadas + cuidado
-historico.csv   ← append-only (exceção: `recalcular` regrava rating_*); rating atual = último rating_depois da categoria
-tentativas.jsonl ← append-only; comandos de cada tentativa (pro tutor revisar)
-atual.json      ← só existe com puzzle aberto: id, arena, ctl (o tutor lê)
-shell_hist      ← ↑ entre puzzles (últimos 2000); só memória, ctl/hist segue limpo
-shell_hist_nativo ← idem, só da trilha (pra ↑ não sugerir tree/bat)
-fichas_lidas.txt ← append-only; ficha passada no leitor ou aberta pelo nome (`xeque ficha` retoma da 1ª que falta)
-configs.json    ← vai pro git; configs.local.json (fora do git) vai por cima (`carregar_cfg`)
-tema/           ← fora do git: itens com o mesmo id trocam os do base (`carregar_itens`)
+configs.json    ← vai pro git; pessoal/configs.json vai por cima (`carregar_cfg`)
+pessoal/        ← fora do git, tudo de quem joga (no note do Matheus é symlink do stow pro ~/.pessoal);
+                  `migrar_pessoal` traz o estado solto na raiz das instalações antigas
+  historico.csv   ← append-only (exceção: `recalcular` regrava rating_*, original em .bak); rating atual = último rating_depois da categoria
+  tentativas.jsonl ← append-only; comandos de cada tentativa (pro tutor revisar)
+  atual.json      ← só existe com puzzle aberto: id, arena, ctl (o tutor lê)
+  shell_hist      ← ↑ entre puzzles (últimos 2000); só memória, ctl/hist segue limpo
+  shell_hist_nativo ← idem, só da trilha (pra ↑ não sugerir tree/bat)
+  fichas_lidas.txt ← append-only; ficha passada no leitor ou aberta pelo nome (`xeque ficha` retoma da 1ª que falta)
+  configs.json    ← ajustes locais (era configs.local.json na raiz)
+  tema/           ← itens com o mesmo id trocam os do base (`carregar_itens`); caminho relativo ao pessoal/
 SetXeque.sh     ← instalador idempotente (apt/dnf/pacman); --chave liga ssh+Tailscale, --remover-acesso desfaz
 chaves/matheus.pub ← a chave que o acesso remoto autoriza (~/.ssh/xeque_amigos_ed25519 do Matheus)
 ```
@@ -55,9 +58,9 @@ Item é pergunta se o check chama `resp*`.
   fixa deixaria de bater). Nada de `$RANDOM`.
 - Público: nada pessoal no que vai pro git — nem nome de gente real, instituição,
   projeto, senha que pareça de verdade. O base é neutro (faculdade, república,
-  Downloads); a cor de cada um vai no `tema/` local. Item novo entra no base, com id
+  Downloads); a cor de cada um vai no `pessoal/tema/`. Item novo entra no base, com id
   estável (o histórico e os temas apontam pelo id). Mudou o base → `validar` sem
-  o configs.local.json (é o que o `xeque_test.sh` faz) e com ele (o tema mesclado).
+  o pessoal/configs.json (é o que o `xeque_test.sh` faz) e com ele (o tema mesclado).
 - Commit com o e-mail noreply do GitHub (configurado no repo), nunca o gmail.
 - HOME=arena dentro do shell; XDG_* continuam na home real (nvim/bat com config).
 - `ctl/tutor` existe → o Claude ajudou no meio; conta como +1 dica.
@@ -78,3 +81,5 @@ Item é pergunta se o check chama `resp*`.
   cobra resumo, cuidado, e que a lição só aponte ficha que existe na etapa dela.
   No livre todas as fichas valem; na trilha, só as das etapas 1..N.
 - Puzzle que exige ferramenta (`usou`) tem que dizer a regra no enunciado ("sem loop").
+
+@pessoal/CLAUDE.md

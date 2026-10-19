@@ -20,15 +20,16 @@ comando `xeque` e roda o teste na sua máquina. Com `--chave tskey-...` (o Mathe
 te manda) ele também libera acesso por ssh via Tailscale, só com chave, depois de
 perguntar; `~/xeque/SetXeque.sh --remover-acesso` desfaz.
 
-Atualizar: `xeque atualizar` (git pull). Seus dados ficam fora do git e nunca são
-tocados: histórico, `configs.local.json` e a pasta `tema/`.
+Atualizar: `xeque atualizar` (git pull). Seus dados ficam na pasta `pessoal/`, fora do
+git, e nunca são tocados: histórico, configs e tema. (Instalação de antes da
+`pessoal/` migra sozinha no primeiro uso.)
 
 ### Tema próprio
 
 O conteúdo base é neutro (faculdade, república, Downloads). Pra deixar com a sua
-cara, crie `tema/licoes.md`, `tema/puzzles.md` ou `tema/nativo.md` com itens de
-**mesmo id** (o do tema troca o do base; o que faltar vem do base) e ponha
-`{"tema": "tema"}` no `configs.local.json`. Rode `xeque validar` depois.
+cara, crie `pessoal/tema/licoes.md`, `pessoal/tema/puzzles.md` ou `pessoal/tema/nativo.md`
+com itens de **mesmo id** (o do tema troca o do base; o que faltar vem do base) e
+ponha `{"tema": "tema"}` no `pessoal/configs.json`. Rode `xeque validar` depois.
 
 ## Uso
 
@@ -124,13 +125,14 @@ lá. Caminho absoluto (`/home/voce/...`) ainda escapa — é um bash real.
 
 - `licoes.md` / `puzzles.md` — o conteúdo do livre, em markdown legível (dá pra escrever os seus)
 - `nativo.md` / `fichas.md` — a trilha (itens com `> etapa: N`) e as fichas dos comandos
-- `historico.csv` — append-only, uma linha por tentativa (só o `recalcular` regrava os ratings)
-- `tentativas.jsonl` — os comandos de cada tentativa, pro tutor do Claude comentar (skill `tutor`)
-- `atual.json` — existe só enquanto tem puzzle aberto; é assim que o Claude sabe onde você está
-- `shell_hist` / `shell_hist_nativo` — os comandos de todos os puzzles (um por categoria): a `↑` e o `Ctrl+R` acham o que você fez antes
-- `fichas_lidas.txt` — append-only, uma ficha por linha: o leitor retoma da primeira que falta
 - `configs.json` — rating inicial, K, janela de escolha, etapas da trilha
-- `configs.local.json` — (opcional, fora do git) vai por cima do configs.json: tema, ajustes seus
-- `tema/` — (opcional, fora do git) seus itens com o mesmo id dos do base
+- `pessoal/` — fora do git, tudo seu:
+  - `historico.csv` — append-only, uma linha por tentativa (só o `recalcular` regrava os ratings)
+  - `tentativas.jsonl` — os comandos de cada tentativa, pro tutor do Claude comentar (skill `tutor`)
+  - `atual.json` — existe só enquanto tem puzzle aberto; é assim que o Claude sabe onde você está
+  - `shell_hist` / `shell_hist_nativo` — os comandos de todos os puzzles (um por categoria): a `↑` e o `Ctrl+R` acham o que você fez antes
+  - `fichas_lidas.txt` — append-only, uma ficha por linha: o leitor retoma da primeira que falta
+  - `configs.json` — (opcional) vai por cima do configs.json: tema, ajustes seus
+  - `tema/` — (opcional) seus itens com o mesmo id dos do base
 - `SetXeque.sh` — instalador; `chaves/matheus.pub` é a chave que o acesso remoto autoriza
 - `xeque_test.sh` — teste isolado em /tmp

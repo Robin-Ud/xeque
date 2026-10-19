@@ -1,4 +1,6 @@
-# dados de quem joga: ficam só na máquina
+# dados de quem joga: ficam só na máquina, em pessoal/
+pessoal
+# (instalações antigas, até o migrar_pessoal rodar)
 historico.csv*
 tentativas.jsonl
 atual.json

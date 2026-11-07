@@ -228,10 +228,15 @@ norm() { printf '%s' "$1" | tr -s ' \t\n' ' ' | sed 's/^ //; s/ $//'; }
 RESPOSTA="$(norm "$(cat "$CTL/resposta" 2>/dev/null)")"
 CWD="$(cat "$CTL/cwd" 2>/dev/null)"
 falha() { printf '  \033[31m✗\033[0m %s\n' "$*"; exit 1; }
+# certo no conteúdo, errado no formato (talhão 6 × talhao_6): avisa e sai com 3, que o pronto não conta
+solto() { norm "$1" | tr 'A-Z' 'a-z' | sed -E 's/(á|à|â|ã|ä|Á|À|Â|Ã|Ä)/a/g; s/(é|è|ê|ë|É|È|Ê|Ë)/e/g; s/(í|ì|î|ï|Í|Ì|Î|Ï)/i/g
+  s/(ó|ò|ô|õ|ö|Ó|Ò|Ô|Õ|Ö)/o/g; s/(ú|ù|û|ü|Ú|Ù|Û|Ü)/u/g; s/(ç|Ç)/c/g; s/[ _-]+/_/g; s#^\./##; s#[/:]+$##'; }
+quase() { [ "$(solto "$RESPOSTA")" = "$(solto "$1")" ] || return 0
+  printf '  \033[33m≈\033[0m quase: o conteúdo bate, mas escreva o nome exato (acento, espaço, _ e maiúscula contam) — não contou\n'; exit 3; }
 resp() { [ -n "$RESPOSTA" ] || falha "essa é uma pergunta — use: responder SUA_RESPOSTA";
-         [ "$RESPOSTA" = "$(norm "$1")" ] || falha "${2:-resposta \"$RESPOSTA\" não confere}"; }
+         [ "$RESPOSTA" = "$(norm "$1")" ] || { quase "$1"; falha "${2:-resposta \"$RESPOSTA\" não confere}"; }; }
 resp_arquivo() { [ -n "$RESPOSTA" ] || falha "essa é uma pergunta — use: responder NOME";
-         [ "$(basename -- "$RESPOSTA")" = "$1" ] || falha "não é \"$RESPOSTA\""; }
+         [ "$(basename -- "$RESPOSTA")" = "$1" ] || { quase "$1"; falha "não é \"$RESPOSTA\""; }; }
 resp_num() { [ -n "$RESPOSTA" ] || falha "essa é uma pergunta — use: responder NUMERO";
          awk -v a="${RESPOSTA/,/.}" -v b="$1" -v t="${2:-0.05}" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(a ~ /^-?[0-9.]+$/ && d<=t)}' \
            || falha "$RESPOSTA não confere"; }
@@ -268,8 +273,11 @@ dica() {
   else echo "sem mais dicas — 'desisto' mostra a solução"; fi
 }
 pronto() {
-  history -a; printf '%s' "$PWD" > "$XEQUE_CTL/cwd"; _xq_conta tentativas
-  if (cd "$XEQUE_ARENA" && "$BASH" "$XEQUE_CTL/check.sh"); then
+  history -a; printf '%s' "$PWD" > "$XEQUE_CTL/cwd"
+  local rc; (cd "$XEQUE_ARENA" && "$BASH" "$XEQUE_CTL/check.sh"); rc=$?
+  [ $rc = 3 ] && return  # quase: só o formato da resposta, não gasta tentativa
+  _xq_conta tentativas
+  if [ $rc = 0 ]; then
     : > "$XEQUE_CTL/ok"; printf '\n\e[1;32m✓ resolvido!\e[0m\n'; exit 0
   else printf '\e[33mainda não.\e[0m  \e[2mmeta · dica · reset · desisto\e[0m\n'; fi
 }

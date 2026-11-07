@@ -95,6 +95,11 @@ assert x.etapa_atual([h(ids[0], "ok")] * 5, nat, c) == 1            # repetir o 
 assert x.etapa_atual([h(i, "ok") for i in ids[:5]] + [h(ids[5], "ajuda")] * 3, nat, c) == 1  # janela de 7
 assert "grep" not in x.cmds_ate(c, 1) and "grep" in x.cmds_ate(c, 4)
 ' && ok "desbloqueio: 5 limpos diferentes nos últimos 7" || nok "regra de desbloqueio"
+printf 'responder Sala 6\nresponder sala_6\n' | python3 xeque.py trilha n1-p1 2>&1 | grep -q 'quase' \
+  && tail -1 pessoal/historico.csv | grep -q ',nativo,n1-p1,300,ok,1,0,' \
+  && ok "resposta certa em outro formato avisa e não conta tentativa" || nok "quase (formato)"
+printf 'responder sala_7\nresponder sala_6\n' | python3 xeque.py trilha n1-p1 >/dev/null 2>&1
+tail -1 pessoal/historico.csv | grep -q ',nativo,n1-p1,300,ajuda,2,0,' && ok "resposta errada de verdade ainda conta" || nok "erro virou quase"
 printf 'reset\nls -R predio\nresponder sala_6\n' | python3 xeque.py trilha n1-p1 >/dev/null 2>&1
 tail -1 pessoal/historico.csv | grep -q ',nativo,n1-p1,300,ok,' && ok "reset funciona com o PATH restrito" || nok "reset na trilha"
 

@@ -17,6 +17,8 @@ xeque.py        ← script único (4 zonas: data, arena, orquestração, interfa
 licoes.md       ← tutor (livre), ordem = ordem do arquivo
 puzzles.md      ← puzzles (livre), `## id · rating · título`
 nativo.md       ← trilha (nativo): lições e puzzles com `> etapa: N`
+sistema.md      ← trilha sistema: igual, + `> tipo:`, `> requer:`, `> sem:`
+fichas_sistema.md ← fichas de pasta (`## /etc`), arquivo e conceito; viram o `xeque mapa`
 fichas.md       ← `## cmd · ano`, `> etapa: N`, `> resumo:`: história + camadas + cuidado
 configs.json    ← vai pro git; pessoal/configs.json vai por cima (`carregar_cfg`)
 pessoal/        ← fora do git, tudo de quem joga (no note do Matheus é symlink do stow pro ~/.pessoal);
@@ -81,5 +83,31 @@ Item é pergunta se o check chama `resp*`.
   cobra resumo, cuidado, e que a lição só aponte ficha que existe na etapa dela.
   No livre todas as fichas valem; na trilha, só as das etapas 1..N.
 - Puzzle que exige ferramenta (`usou`) tem que dizer a regra no enunciado ("sem loop").
+
+## Trilha sistema
+- Categoria `sistema` (modos `sistema`, `sistema-licao`), Elo próprio, etapas em
+  `configs.json` → `trilha_sistema` (`nome`, `sobre`), desbloqueio em `desbloqueio_sistema`.
+  As funções de trilha recebem `t` (`'nativo'` | `'sistema'`); `trilha_cfg(cfg, t)`.
+- Trava: `travar()` (landlock via ctypes, syscalls 444–446) no `preexec_fn` do bash,
+  da solução e do check no `validar`. Escreve só na raiz da arena, em `/dev` e no
+  `fichas_lidas.txt`. NO_NEW_PRIVS junto (o sudo não roda). TMPDIR e XDG_STATE/CACHE
+  vão pra raiz; `$XEQUE_CASA` = home real (só leitura). Não usar bwrap: user namespace
+  mostra root como nobody e o AppArmor do Mint bloqueia.
+- `> tipo: investigar | fazer | arrumar`; `> requer: a|b, c` (comando, caminho ou
+  `systemd`; o item some na máquina que não tem e o `validar` mostra "pulado");
+  `> sem: cmd` (impostor na frente do PATH + `nao_usou cmd` no check).
+- Check extra: `$DISTRO` (fedora | debian | outro), `resp_um_de`, `nao_usou`,
+  `$SHELL_PID` (o shell de quem joga; o `validar` roda o check como filho do shell
+  da solução, igual ao `pronto`).
+- Detetive = o check calcula a verdade na hora (`resp "$(uname -r)"`); a solução
+  termina em `responder "$(...)"`. Só fato **estável** (nada de memória livre,
+  uptime, PID que muda). Portável: mawk e dash no Mint, gawk e bash no Fedora.
+- Ficha de sistema: o que é, história curta e verdadeira, linhas `olhe`, `Fedora`,
+  `Mint`, `cuidado` (e `FHS`/`POSIX`/`GNU` quando servir). Nome com `/` vira arquivo
+  `%etc%fstab.txt` no ctl; `ficha /etc` na arena acha.
+- Testar no Mint: imagem `docker.io/linuxmintd/mint22-amd64` no podman (sem systemd
+  de PID 1: os `requer: systemd` aparecem pulados). O kernel do container é o do
+  host, então a ABI 4 do landlock do Mint real não é testada assim.
+- Pesquisa que embasou as etapas (fora do git): `pessoal/pesquisa/Trilha sistema do xeque/`.
 
 @pessoal/CLAUDE.md

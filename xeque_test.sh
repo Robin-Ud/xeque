@@ -2,7 +2,7 @@
 # Teste isolado em /tmp — o historico.csv real não é tocado.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DIR="$(mktemp -d /tmp/xeque_test.XXXXXX)"
-cp "$SCRIPT_DIR"/{xeque.py,configs.json,licoes.md,puzzles.md,nativo.md,fichas.md} "$TEST_DIR/"
+cp "$SCRIPT_DIR"/{xeque.py,configs.json,licoes.md,puzzles.md,nativo.md,fichas.md,sistema.md,fichas_sistema.md} "$TEST_DIR/"
 cd "$TEST_DIR" || exit 1
 falhas=0
 # arenas de um xeque aberto em outro terminal não contam como sobra do teste
@@ -137,7 +137,7 @@ assert x.carregar_itens(c, "licoes") == x.parse_itens("licoes.md")   # sem tema/
 rm -rf pessoal/tema pessoal/configs.json
 
 # instalação antiga: estado solto na raiz e configs.local.json → vai tudo pra pessoal/ sem sobrescrever
-mkdir -p mig/tema && cp xeque.py configs.json licoes.md puzzles.md nativo.md fichas.md mig/
+mkdir -p mig/tema && cp xeque.py configs.json licoes.md puzzles.md nativo.md fichas.md sistema.md fichas_sistema.md mig/
 cp pessoal/historico.csv mig/ && echo cd > mig/fichas_lidas.txt
 printf '{"tema": "tema", "rating_inicial": 900}\n' > mig/configs.local.json
 mkdir -p mig/pessoal && echo ls > mig/pessoal/fichas_lidas.txt
@@ -154,6 +154,45 @@ if command -v busybox >/dev/null; then
   a=$(bash -c "$gera"); b=$(PATH="$PWD/bbawk:$PATH" bash -c "$gera")
   [ -n "$a" ] && [ "$a" = "$b" ] && ok "sorteio igual em qualquer awk (sistema × busybox)" || nok "rnd() mudou de awk pra awk"
 fi
+
+echo; echo "--- 6. trilha sistema: vê tudo, só escreve na arena"
+if python3 -c 'import xeque as x, sys; sys.exit(0 if x.landlock_abi() else 1)'; then
+  marca=$(mktemp -u "$HOME/.xeque_trava.XXXXXX")
+  printf '%s\n' "touch $marca 2>/dev/null; touch notas/x && echo M:\"\"arena" "ls -ln /usr/bin/ls | awk '{print \"M:dono=\" \$3}'" \
+    "ficha /etc/os-release | grep -q 'Cada distro' && echo M:\"\"ficha" "echo M:\$XEQUE_CASA" 'responder "$(uname -r)"' \
+    | python3 xeque.py sistema s1-a > saida_s 2>&1
+  [ ! -e "$marca" ] && ok "trava: não escreve na home real" || { nok "trava deixou escrever em $marca"; rm -f "$marca"; }
+  grep -q 'M:arena' saida_s && ok "trava: escreve na arena" || nok "trava bloqueou a arena"
+  grep -q 'M:dono=0$' saida_s && ok "trava: dono real aparece (root, não nobody)" || nok "dono do /usr/bin/ls"
+  grep -q 'M:ficha' saida_s && ok "ficha de pasta abre na arena (ficha /etc/os-release)" || nok "ficha de pasta"
+  grep -qx "M:$HOME" saida_s && ok "\$XEQUE_CASA aponta pra home real" || nok "XEQUE_CASA"
+  grep -q ',sistema-licao,s1-a,,ok,1,0,' pessoal/historico.csv && ok "lição da sistema registrada" || nok "lição s1-a"
+  printf 'responder "$(. /etc/os-release; echo $VERSION_ID)"\n' | python3 xeque.py sistema s1-p1 >/dev/null 2>&1
+  grep -q ',sistema,s1-p1,350,ok,1,0,.*,400,' pessoal/historico.csv && ok "puzzle sistema começa do rating próprio (400)" || nok "rating sistema"
+  python3 -c '
+import json, xeque as x; c = json.load(open("configs.json")); h = x.read_hist()
+assert x.rating_atual(h, c, "sistema") > 400 and x.rating_atual(h, c, "nativo") == x.rating_atual([r for r in h if r["modo"] != "sistema"], c, "nativo")
+' && ok "Elo sistema separado do nativo e do livre" || nok "Elo sistema"
+  printf 'exit\n' | python3 xeque.py sistema s2-p1 2>&1 | grep -qE 'etapa 2|não existe' && ok "etapa 2 da sistema bloqueada no começo" || nok "bloqueio sistema"
+else
+  echo "  (kernel sem landlock: pulando a parte travada)"
+fi
+python3 -c '
+import xeque as x
+it = {"requer": ["comando_que_nao_existe_xq|/caminho/que/nao/existe"]}
+assert x.falta_requer(it) and not x.falta_requer({"requer": ["bash", "/etc|nada"]})
+it = x.parse_itens("sistema.md")[0]; it = dict(it, sem=["uname"], check="nao_usou uname\n", solucao="")
+raiz, arena, ctl = x.montar_arena(it)
+import subprocess, os, shutil
+env = x.env_arena(arena, ctl, "", sistema=True)
+r = subprocess.run(["bash", "-c", "uname"], env=env, capture_output=True, text=True)
+assert r.returncode == 127 and "sem uname" in r.stderr, r
+open(os.path.join(ctl, "hist"), "w").write("uname -r\n")
+assert subprocess.run(["bash", os.path.join(ctl, "check.sh")], env=env, cwd=arena, capture_output=True).returncode == 1
+shutil.rmtree(raiz)
+' && ok "requer pula o que falta; sem: vira impostor e nao_usou reprova" || nok "requer / sem"
+python3 xeque.py mapa | grep -q 'os-release' && ok "mapa mostra as fichas de pasta" || nok "mapa"
+python3 xeque.py ficha /etc/os-release | grep -q 'Cada distro tinha' && ok "xeque ficha /caminho acha ficha de pasta" || nok "xeque ficha /etc/os-release"
 
 echo
 cd / && rm -rf "$TEST_DIR"

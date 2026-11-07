@@ -36,10 +36,13 @@ ponha `{"tema": "tema"}` no `pessoal/configs.json`. Rode `xeque validar` depois.
 ## Uso
 
 ```bash
-xeque              # menu: trilha, tutor, puzzle, puzzle do dia, stats
+xeque              # menu: trilha, tutor, puzzle, puzzle do dia, stats, sistema
 xeque trilha       # trilha nativa: próxima lição/puzzle da sua etapa
+xeque sistema      # trilha sistema: a máquina por dentro (camadas, pastas, processos...)
+xeque mapa         # a árvore desde o /, uma linha por pasta, com o que ela guarda
 xeque ficha        # leitor: retoma da primeira ficha não lida (Enter · v volta · q depois)
 xeque ficha cmd    # uma ficha (história e camadas POSIX/GNU/Mac), com pager
+xeque ficha /etc   # ficha de pasta (o que é, Fedora × Mint, cuidado)
 xeque ficha lista  # todas por etapa, • nas não lidas
 xeque tutor        # continua de onde parou (xeque tutor 7 → lição 07)
 xeque puzzle       # puzzle perto do seu rating; Enter pro próximo
@@ -89,12 +92,35 @@ POSIX, GNU ou Mac, e quando NÃO usar) e as lições; cada lição começa com u
 por ficha (ano + por quê) — no tutor livre também. Depois vêm os puzzles. **5 puzzles diferentes
 limpos entre os últimos 7 da etapa** desbloqueiam a próxima, e o PATH cresce:
 
-andar → mexer → olhar → filtrar → achar → editar → processar → scripts → sistema → gnu
+andar → mexer → olhar → filtrar → achar → editar → processar → scripts → máquina → gnu
 
 As etapas e os comandos de cada uma ficam em `configs.json` (`trilha`). O
 busybox é o mesmo do roteador e do Alpine: se resolve lá, resolve em qualquer
 lugar. Na camada `gnu` os comandos passam a ser os do sistema (`/usr/bin`).
 Caminho absoluto (`/usr/bin/tree`) ainda funciona — o PATH é treino, não cadeado.
+
+## Trilha sistema
+
+A trilha nativa ensina o shell; esta ensina **a máquina**: o que é Linux, o que
+cada pasta guarda desde o `/`, processos, usuários, pacotes, logs, serviços, boot,
+rede e segurança. Vale pro Fedora e pro Mint — onde os dois diferem, a ficha diz.
+
+Aqui o shell vê **a máquina inteira de verdade** (`/etc`, `/proc`, `journalctl`,
+`systemctl`), mas só escreve dentro da arena. Quem garante é o **landlock**, do
+próprio kernel (5.13+, sem root): tentar escrever na sua casa dá "Permissão negada",
+e o `sudo` nem roda. A casa de verdade fica em `$XEQUE_CASA`, só leitura.
+
+Três tipos de puzzle: **investigar** (pergunta sobre a sua máquina; a resposta é
+conferida na hora, então vale em qualquer PC), **fazer** e **arrumar** (na arena).
+Elo próprio (começa em 400); **4 puzzles diferentes limpos entre os últimos 6**
+abrem a próxima etapa:
+
+camadas → processos → uma árvore → tudo é arquivo → usuários e permissões →
+achar programas → sua casa → pacotes → /var e logs → serviços → kernel e hardware →
+boot → rede → segurança → não perder nada
+
+As etapas que ainda não têm conteúdo avisam "em construção". Kernel sem landlock:
+`xeque sistema --sem-trava` roda sem a trava (por sua conta).
 
 ## Rating
 
@@ -127,6 +153,7 @@ lá. Caminho absoluto (`/home/voce/...`) ainda escapa — é um bash real.
 
 - `licoes.md` / `puzzles.md` — o conteúdo do livre, em markdown legível (dá pra escrever os seus)
 - `nativo.md` / `fichas.md` — a trilha (itens com `> etapa: N`) e as fichas dos comandos
+- `sistema.md` / `fichas_sistema.md` — a trilha sistema e as fichas de pasta e de conceito
 - `configs.json` — rating inicial, K, janela de escolha, etapas da trilha
 - `pessoal/` — fora do git, tudo seu:
   - `historico.csv` — append-only, uma linha por tentativa (só o `recalcular` regrava os ratings)

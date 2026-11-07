@@ -14,6 +14,10 @@
   "nativo": "nativo.md",
   "fichas": "fichas.md",
   "rating_inicial_nativo": 400,
+  "sistema": "sistema.md",
+  "fichas_sistema": "fichas_sistema.md",
+  "rating_inicial_sistema": 400,
+  "desbloqueio_sistema": {"limpos": 4, "janela": 6},
   "desbloqueio": {"limpos": 5, "janela": 7},
   "sempre": ["clear"],
   "trilha": [
@@ -25,7 +29,24 @@
     {"nome": "editar", "camada": "busybox", "cmds": ["vi", "sed"]},
     {"nome": "processar", "camada": "busybox", "cmds": ["awk", "expr", "basename", "dirname", "date"]},
     {"nome": "scripts", "camada": "busybox", "cmds": ["sh", "chmod"]},
-    {"nome": "sistema", "camada": "busybox", "cmds": ["ps", "kill", "df", "du", "tar", "gzip", "gunzip"]},
+    {"nome": "máquina", "camada": "busybox", "cmds": ["ps", "kill", "df", "du", "tar", "gzip", "gunzip"]},
     {"nome": "gnu", "camada": "gnu", "cmds": ["man", "file", "stat", "diff", "column"]}
+  ],
+  "trilha_sistema": [
+    {"nome": "camadas", "sobre": "o que é Linux: kernel, GNU, systemd, shell, terminal, gráfico, distro"},
+    {"nome": "processos", "sobre": "todo programa rodando tem dono, pasta, ambiente e um pai"},
+    {"nome": "uma árvore", "sobre": "um / só, discos montados em pastas, o que tem no primeiro nível"},
+    {"nome": "tudo é arquivo", "sobre": "/dev, /proc e /sys: o kernel fingindo ser pasta"},
+    {"nome": "usuários e permissões", "sobre": "uid, grupos, rwx, dono e o que o sudo faz de verdade"},
+    {"nome": "achar programas", "sobre": "PATH, builtin, alias, ./ e ~/.local/bin"},
+    {"nome": "sua casa", "sobre": "os ponto-arquivos, XDG, /etc × /usr/lib × ~/.config, .bashrc × .profile"},
+    {"nome": "pacotes", "sobre": "/usr e /opt, de qual pacote é cada arquivo, rpm × dpkg, flatpak"},
+    {"nome": "/var e logs", "sobre": "o que muda com o uso, journald × rsyslog, /run e os /tmp"},
+    {"nome": "serviços", "sobre": "systemd: units, onde vivem, drop-ins, --user, timers"},
+    {"nome": "kernel e hardware", "sobre": "drivers, módulos, udev, o log do kernel"},
+    {"nome": "boot", "sobre": "UEFI, GRUB, kernel, initramfs, systemd, login"},
+    {"nome": "rede", "sobre": "interfaces, rotas, portas e o caminho de um nome até o IP"},
+    {"nome": "segurança", "sobre": "portas expostas, firewall, SSH, quem vira root, SELinux × AppArmor"},
+    {"nome": "não perder nada", "sobre": "backup: o que guardar, onde e como"}
   ]
 }

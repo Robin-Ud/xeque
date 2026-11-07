@@ -4,6 +4,7 @@ Cada desafio monta uma arena descartável em /tmp e abre um bash DE VERDADE lá
 dentro. Você resolve com comandos reais e digita `pronto` (ou `responder X`).
 """
 import csv
+import ctypes
 import difflib
 import hashlib
 import json
@@ -11,6 +12,7 @@ import os
 import random
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -35,9 +37,11 @@ FICHAS_LIDAS = os.path.join(PESSOAL, 'fichas_lidas.txt')
 CAMPOS = ['data_hora', 'modo', 'id', 'rating_item', 'resultado', 'tentativas',
           'dicas', 'segundos', 'comandos', 'rating_antes', 'rating_depois']
 META_CMDS = {'pronto', 'dica', 'meta', 'reset', 'desisto', 'responder', 'ficha', 'exit'}
-# Duas categorias com Elo separado: livre (o note, com tree/bat/nvim) e nativo
-# (a trilha: PATH só com o que você já desbloqueou). Lição não mexe no rating.
-LICOES = ('tutor', 'nativo-licao')
+# Três categorias com Elo separado: livre (o note, com tree/bat/nvim), nativo
+# (a trilha do shell: PATH só com o que você já desbloqueou) e sistema (a trilha
+# da máquina: vê tudo, só escreve na arena). Lição não mexe no rating.
+TRILHAS = ('nativo', 'sistema')
+LICOES = ('tutor', 'nativo-licao', 'sistema-licao')
 BASH = shutil.which('bash') or '/bin/bash'  # absoluto: o PATH da trilha não tem bash
 BUSYBOX = shutil.which('busybox')
 
@@ -118,7 +122,8 @@ def parse_itens(name: str) -> list[dict]:
         partes = [p.strip() for p in cab.split('·')]
         it = {'id': partes[0], 'titulo': partes[-1], 'rating': None,
               'dicas': [], 'solucao': '', 'tags': [], 'inicio': '',
-              'setup': '', 'check': '', 'etapa': None, 'fichas': []}
+              'setup': '', 'check': '', 'etapa': None, 'fichas': [],
+              'tipo': '', 'requer': [], 'sem': []}
         if len(partes) == 3:
             it['rating'] = int(partes[1])
         for lang in ('setup', 'check'):
@@ -141,8 +146,10 @@ def parse_itens(name: str) -> list[dict]:
                 it['inicio'] = m.group(2).strip()
             elif m.group(1) == 'etapa':
                 it['etapa'] = int(m.group(2))
-            elif m.group(1) == 'fichas':
-                it['fichas'] = [f.strip() for f in m.group(2).split(',')]
+            elif m.group(1) in ('fichas', 'requer', 'sem'):
+                it[m.group(1)] = [f.strip() for f in m.group(2).split(',')]
+            elif m.group(1) == 'tipo':
+                it['tipo'] = m.group(2).strip()
         it['meta'] = '\n'.join(meta).strip()
         it['pergunta'] = bool(re.search(r'^\s*resp', it['check'], flags=re.M))
         itens.append(it)
@@ -161,6 +168,16 @@ def carregar_itens(cfg: dict, chave: str) -> list[dict]:
     troca = {it['id']: it for it in parse_itens(tema)}
     ids = {it['id'] for it in base}
     return [troca.get(it['id'], it) for it in base] + [it for i, it in troca.items() if i not in ids]
+
+def _tem(alvo: str) -> bool:
+    if alvo == 'systemd':  # o PID 1 é o systemd (em container costuma não ser)
+        return os.path.isdir('/run/systemd/system')
+    return os.path.exists(alvo) if alvo.startswith('/') else bool(shutil.which(alvo))
+
+def falta_requer(it: dict) -> str:
+    """`> requer: systemd, rpm|dpkg`: cada termo precisa de uma das alternativas
+    (comando no PATH, caminho que existe ou `systemd`). Devolve o primeiro que falta."""
+    return next((t for t in it['requer'] if not any(_tem(a.strip()) for a in t.split('|'))), '')
 
 def parse_fichas(name: str) -> list[dict]:
     """fichas.md: '## nome · ano', '> etapa: N', '> resumo: ...' (uma linha, aparece
@@ -227,6 +244,7 @@ ARENA="$XEQUE_ARENA"; CTL="$XEQUE_CTL"; ORIG="$XEQUE_CTL/orig"
 norm() { printf '%s' "$1" | tr -s ' \t\n' ' ' | sed 's/^ //; s/ $//'; }
 RESPOSTA="$(norm "$(cat "$CTL/resposta" 2>/dev/null)")"
 CWD="$(cat "$CTL/cwd" 2>/dev/null)"
+SHELL_PID="$(cat "$CTL/pid" 2>/dev/null)"  # o PID do shell de quem joga (o check roda num filho dele)
 falha() { printf '  \033[31m✗\033[0m %s\n' "$*"; exit 1; }
 # certo no conteúdo, errado no formato (talhão 6 × talhao_6): avisa e sai com 3, que o pronto não conta
 solto() { norm "$1" | tr 'A-Z' 'a-z' | sed -E 's/(á|à|â|ã|ä|Á|À|Â|Ã|Ä)/a/g; s/(é|è|ê|ë|É|È|Ê|Ë)/e/g; s/(í|ì|î|ï|Í|Ì|Î|Ï)/i/g
@@ -245,6 +263,14 @@ existe() { [ -e "$1" ] || falha "$1 não existe"; }
 sumiu() { [ ! -e "$1" ] || falha "$1 ainda existe"; }
 nenhum() { compgen -G "$1" >/dev/null && falha "ainda tem arquivo casando com $1"; return 0; }
 usou() { grep -qF -- "$1" "$CTL/hist" 2>/dev/null || falha "a missão pede usar $1"; }
+nao_usou() { grep -qw -- "$1" "$CTL/hist" 2>/dev/null && falha "a missão pede resolver sem $1"; return 0; }
+resp_um_de() {  # mais de uma resposta certa (ex.: o nome muda de distro pra distro)
+  local o; [ -n "$RESPOSTA" ] || falha "essa é uma pergunta — use: responder SUA_RESPOSTA"
+  for o; do [ "$RESPOSTA" = "$(norm "$o")" ] && return 0; done
+  for o; do quase "$o"; done; falha "resposta \"$RESPOSTA\" não confere"; }
+# família da distro, pro check que muda entre Fedora e Mint: fedora | debian | outro
+DISTRO=$( (. /etc/os-release 2>/dev/null; case " $ID $ID_LIKE " in
+  *" fedora "*|*" rhel "*) echo fedora;; *" debian "*|*" ubuntu "*) echo debian;; *) echo outro;; esac) )
 intacto() { for p; do diff -rq "$ORIG/$p" "$ARENA/$p" >/dev/null 2>&1 || falha "$p foi alterado — devia ficar intacto"; done; }
 intacto_exceto() {  # todo arquivo original cujo caminho NÃO casa com a regex segue idêntico
   local f
@@ -299,12 +325,13 @@ reset() {
 ficha() {  # a história, as camadas (POSIX/GNU/Mac) e o cuidado de cada comando
   local f
   if [ -n "$1" ]; then
-    [ -f "$XEQUE_CTL/fichas/$1.txt" ] || { echo "sem ficha de '$1' (ainda)"; return; }
-    _xq less -RFX "$XEQUE_CTL/fichas/$1.txt"  # longa: rola com j/k, q sai; curta: só imprime
+    local arq="$XEQUE_CTL/fichas/${1//\//%}.txt"  # ficha de pasta: /usr/share → %usr%share
+    [ -f "$arq" ] || { echo "sem ficha de '$1' (ainda)"; return; }
+    _xq less -RFX "$arq"  # longa: rola com j/k, q sai; curta: só imprime
     _xq grep -qx -- "$1" "$XEQUE_LIDAS" 2>/dev/null || echo "$1" >> "$XEQUE_LIDAS"
   else
     printf 'fichas: '
-    for f in "$XEQUE_CTL"/fichas/*.txt; do f=${f##*/}; f=${f%.txt}
+    for f in "$XEQUE_CTL"/fichas/*.txt; do f=${f##*/}; f=${f%.txt}; f=${f//%//}
       if _xq grep -qx -- "$f" "$XEQUE_LIDAS" 2>/dev/null; then printf '%s ' "$f"; else printf '\e[1m•%s\e[0m ' "$f"; fi
     done
     printf '\n\e[2mficha NOME mostra uma · • = ainda não lida'
@@ -312,6 +339,7 @@ ficha() {  # a história, as camadas (POSIX/GNU/Mac) e o cuidado de cada comando
     printf '\e[0m\n'
   fi
 }
+printf '%s' $$ > "$XEQUE_CTL/pid"
 cd "$XEQUE_ARENA/$XEQUE_INICIO"
 meta
 '''
@@ -332,7 +360,7 @@ def render(texto: str) -> str:
 
 def render_ficha(fi: dict) -> str:
     cor = lambda m: m.group(1) + (C['r'] if m.group(2) == 'cuidado' else C['m']) + m.group(2) + C['0']
-    corpo = re.sub(r'^(\s+)(POSIX|GNU|Mac/BSD|busybox|cuidado)\b', cor, fi['texto'], flags=re.M)
+    corpo = re.sub(r'^(\s+)(POSIX|GNU|Mac/BSD|busybox|FHS|Fedora|Mint|olhe|cuidado)\b', cor, fi['texto'], flags=re.M)
     return f"{C['b']}♞ ficha · {fi['cab']}{C['0']}\n\n{render(corpo)}\n"
 
 def resumo_fichas(it: dict, fichas: list[dict]) -> str:
@@ -359,6 +387,50 @@ def montar_bin(bindir: str, cmds: list[str], camada: str) -> None:
         if alvo:
             os.symlink(alvo, os.path.join(bindir, c))
 
+# --- trava de escrita (landlock) ---
+# Na trilha sistema o shell lê a máquina inteira, mas só escreve na arena. Landlock
+# é do próprio kernel (5.13+): sem root e sem user namespace. O bwrap mostraria
+# root como nobody e o SELinux desligado — e no Mint o AppArmor nem deixa ele rodar.
+_LL_CRIAR, _LL_REGRA, _LL_TRAVAR = 444, 445, 446  # mesmos números em todas as arquiteturas
+_LL_ESCREVER, _LL_TRUNCAR = 1 << 1, 1 << 14
+
+def landlock_abi() -> int:
+    """Versão do landlock que o kernel tem (0 = nenhuma)."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError:
+        return 0
+    return max(libc.syscall(_LL_CRIAR, None, 0, 1), 0)  # flag 1 = só pergunta a versão
+
+def travar(liberadas: list[str]) -> None:
+    """Roda no filho antes do exec: dali em diante, criar/apagar/escrever só dentro
+    de `liberadas`. Ler e executar continuam livres. Sem volta, e herda pros filhos."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    abi = landlock_abi()
+    # WRITE_FILE + REMOVE_*/MAKE_* (bits 4–12); REFER (mv entre pastas) e TRUNCATE vieram depois
+    w = _LL_ESCREVER | sum(1 << i for i in range(4, 13))
+    w |= (1 << 13 if abi >= 2 else 0) | (_LL_TRUNCAR if abi >= 3 else 0)
+    attr = struct.pack('Q', w)
+    fd = libc.syscall(_LL_CRIAR, attr, len(attr), 0)
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), 'landlock indisponível')
+    for p in liberadas:
+        alvo = os.open(p, os.O_PATH | os.O_CLOEXEC)
+        acesso = w if os.path.isdir(p) else w & (_LL_ESCREVER | _LL_TRUNCAR)  # arquivo: só os direitos de arquivo
+        if libc.syscall(_LL_REGRA, fd, 1, struct.pack('=QI', acesso, alvo), 0) != 0:
+            raise OSError(ctypes.get_errno(), f'landlock: regra pra {p}')
+        os.close(alvo)
+    libc.prctl(38, 1, 0, 0, 0)  # PR_SET_NO_NEW_PRIVS: exigência do landlock (e o sudo não escala)
+    if libc.syscall(_LL_TRAVAR, fd, 0) != 0:
+        raise OSError(ctypes.get_errno(), 'landlock: travar')
+    os.close(fd)
+
+def trava_da(raiz: str):
+    """O preexec_fn da trilha sistema: escreve na raiz da arena, em /dev (o 2>/dev/null
+    e o terminal) e na lista de fichas lidas."""
+    open(FICHAS_LIDAS, 'a').close()
+    return lambda: travar([raiz, '/dev', FICHAS_LIDAS])
+
 def montar_arena(it: dict, path: dict | None = None, fichas: list[dict] = ()) -> tuple[str, str, str]:
     """Cria raiz/{arena,ctl}, roda o setup e guarda a cópia intocada em ctl/orig,
     com as `fichas` em ctl/fichas. Na trilha (`path`), monta também raiz/bin."""
@@ -381,15 +453,22 @@ def montar_arena(it: dict, path: dict | None = None, fichas: list[dict] = ()) ->
             f.write(render(d) + '\n')
     if path:
         montar_bin(os.path.join(raiz, 'bin'), path['cmds'], path['camada'])
+    if it['sem']:  # `> sem: ss`: um impostor na frente do PATH (o check confere com nao_usou)
+        os.makedirs(os.path.join(raiz, 'sem'))
+        for c in it['sem']:
+            with open(os.path.join(raiz, 'sem', c), 'w') as f:
+                f.write(f'#!/bin/sh\necho "{c}: nesse puzzle, sem {c} — o desafio é achar outro caminho" >&2\nexit 127\n')
+            os.chmod(os.path.join(raiz, 'sem', c), 0o755)
     os.makedirs(os.path.join(ctl, 'fichas'))
     for fi in fichas:
-        with open(os.path.join(ctl, 'fichas', fi['nome'] + '.txt'), 'w') as f:
+        with open(os.path.join(ctl, 'fichas', fi['nome'].replace('/', '%') + '.txt'), 'w') as f:
             f.write(render_ficha(fi))
     return raiz, arena, ctl
 
-def env_arena(arena: str, ctl: str, inicio: str, trilha: bool = False) -> dict:
+def env_arena(arena: str, ctl: str, inicio: str, trilha: bool = False, sistema: bool = False) -> dict:
     env = dict(os.environ)
     real = os.path.expanduser('~')
+    raiz = os.path.dirname(arena)
     # HOME = arena: `cd`, `~` e `rm -rf ~/...` ficam presos lá dentro.
     # As XDG apontam pra home real pra nvim/bat manterem sua config.
     env.update({'HOME': arena, 'XEQUE_ARENA': arena, 'XEQUE_CTL': ctl,
@@ -401,7 +480,14 @@ def env_arena(arena: str, ctl: str, inicio: str, trilha: bool = False) -> dict:
                 'XDG_STATE_HOME': env.get('XDG_STATE_HOME', f'{real}/.local/state'),
                 'XDG_CACHE_HOME': env.get('XDG_CACHE_HOME', f'{real}/.cache')})
     if trilha:  # o bin mora ao lado da arena, fora do alcance do `ls`
-        env.update({'PATH': os.path.join(os.path.dirname(arena), 'bin'), 'EDITOR': 'vi', 'VISUAL': 'vi'})
+        env.update({'PATH': os.path.join(raiz, 'bin'), 'EDITOR': 'vi', 'VISUAL': 'vi'})
+    if sistema:  # a home real fica só leitura: o que programa grava (temp, estado, cache) vai pra raiz
+        for k, sub in (('TMPDIR', 'tmp'), ('XDG_STATE_HOME', 'xdg/state'), ('XDG_CACHE_HOME', 'xdg/cache')):
+            env[k] = os.path.join(raiz, sub)
+            os.makedirs(env[k], exist_ok=True)
+        env['XEQUE_CASA'] = real
+    if os.path.isdir(os.path.join(raiz, 'sem')):
+        env['PATH'] = os.path.join(raiz, 'sem') + ':' + env['PATH']
     for k in ('PROMPT_COMMAND', 'BASH_ENV', 'ENV'):
         env.pop(k, None)
     return env
@@ -422,7 +508,8 @@ def guardar_shell_hist(novos: str, arquivo: str) -> None:
 def jogar(it: dict, modo: str, fichas: list[dict] = (), path: dict | None = None) -> dict:
     """Abre o bash na arena e devolve o que aconteceu lá dentro."""
     raiz, arena, ctl = montar_arena(it, path, fichas)
-    tipo = 'pergunta' if it['pergunta'] else 'tarefa'
+    sistema = categoria(modo) == 'sistema'
+    tipo = it['tipo'] or ('pergunta' if it['pergunta'] else 'tarefa')
     rodape = ('responda com: `responder SUA_RESPOSTA`' if it['pergunta']
               else 'quando terminar: `pronto`')
     cab = it['id'] if modo in LICOES else f"{it['id']} · {it['rating']}"
@@ -439,8 +526,9 @@ def jogar(it: dict, modo: str, fichas: list[dict] = (), path: dict | None = None
         json.dump({'id': it['id'], 'modo': modo, 'arena': arena, 'ctl': ctl}, f)
     t0 = time.time()
     try:
-        subprocess.run([BASH, '--rcfile', rc, '-i'],
-                       env=env_arena(arena, ctl, it['inicio'], bool(path)), cwd=arena)
+        subprocess.run([BASH, '--rcfile', rc, '-i'], cwd=arena,
+                       env=env_arena(arena, ctl, it['inicio'], bool(path), sistema),
+                       preexec_fn=trava_da(raiz) if sistema and landlock_abi() else None)
     finally:
         os.remove(ATUAL_JSON)
     seg = int(time.time() - t0)
@@ -465,18 +553,18 @@ def jogar(it: dict, modo: str, fichas: list[dict] = (), path: dict | None = None
 # ==========================================
 
 def categoria(modo: str) -> str:
-    return 'nativo' if modo.startswith('nativo') else 'livre'
+    return next((t for t in TRILHAS if modo.startswith(t)), 'livre')
 
 def comando_de(modo: str, iid: str) -> str:
     """O comando que reabre o item — pra voltar depois."""
-    sub = {'tutor': 'tutor', 'nativo': 'trilha', 'nativo-licao': 'trilha'}.get(modo, 'puzzle')
+    sub = {'tutor': 'tutor', 'nativo': 'trilha', 'sistema': 'sistema'}.get(modo.removesuffix('-licao'), 'puzzle')
     return f'xeque {sub} {iid}'
 
 def rating_atual(hist: list[dict], cfg: dict, cat: str = 'livre') -> int:
     for row in reversed(hist):
         if row['rating_depois'] and categoria(row['modo']) == cat:
             return int(row['rating_depois'])
-    return cfg['rating_inicial_nativo' if cat == 'nativo' else 'rating_inicial']
+    return cfg.get(f'rating_inicial_{cat}', cfg['rating_inicial'])
 
 def novo_rating(r: int, rp: int, score: int, n_jogos: int, cfg: dict, repetido: bool = False) -> int:
     """Elo: acima do seu nível, acertar rende mais do que errar custa; abaixo, o contrário.
@@ -537,7 +625,11 @@ def proxima_licao(licoes: list[dict], hist: list[dict]) -> dict | None:
     feitas = {h['id'] for h in hist if h['modo'] in LICOES and h['resultado'] in ('ok', 'ajuda')}
     return next((l for l in licoes if l['id'] not in feitas), None)
 
-# --- trilha (categoria nativo) ---
+# --- trilhas: nativo (o shell, PATH por etapa) e sistema (a máquina, tudo à vista) ---
+
+def trilha_cfg(cfg: dict, t: str) -> tuple[list[dict], dict]:
+    """As etapas e a regra de desbloqueio de cada trilha."""
+    return (cfg['trilha'], cfg['desbloqueio']) if t == 'nativo' else (cfg['trilha_sistema'], cfg['desbloqueio_sistema'])
 
 def cmds_ate(cfg: dict, n: int) -> list[str]:
     """O PATH da etapa n: tudo que as etapas 1..n desbloquearam."""
@@ -549,29 +641,33 @@ def puzzles_da_etapa(itens: list[dict], n: int) -> list[dict]:
 def licoes_da_etapa(itens: list[dict], n: int) -> list[dict]:
     return [l for l in itens if l['etapa'] == n and not l['rating']]
 
-def limpos_recentes(hist: list[dict], itens: list[dict], cfg: dict, n: int) -> int:
+def limpos_recentes(hist: list[dict], itens: list[dict], cfg: dict, n: int, t: str = 'nativo') -> int:
     """Puzzles DIFERENTES da etapa resolvidos limpos entre os últimos `janela` jogos dela."""
     ids = {p['id'] for p in puzzles_da_etapa(itens, n)}
-    jogos = [h for h in hist if h['modo'] == 'nativo' and h['id'] in ids][-cfg['desbloqueio']['janela']:]
+    jogos = [h for h in hist if h['modo'] == t and h['id'] in ids][-trilha_cfg(cfg, t)[1]['janela']:]
     return len({h['id'] for h in jogos if h['resultado'] == 'ok'})
 
-def etapa_atual(hist: list[dict], itens: list[dict], cfg: dict) -> int:
+def etapa_atual(hist: list[dict], itens: list[dict], cfg: dict, t: str = 'nativo') -> int:
+    etapas, regra = trilha_cfg(cfg, t)
     n = 1
-    while n < len(cfg['trilha']) and limpos_recentes(hist, itens, cfg, n) >= cfg['desbloqueio']['limpos']:
+    while n < len(etapas) and limpos_recentes(hist, itens, cfg, n, t) >= regra['limpos']:
         n += 1
     return n
 
 def path_da_etapa(cfg: dict, fichas: list[dict], n: int) -> dict:
     return {'cmds': cmds_ate(cfg, n), 'camada': cfg['trilha'][n - 1]['camada'],
-            'fichas': [f for f in fichas if f['etapa'] <= n]}
+            'fichas': fichas_ate(fichas, n)}
 
-def proximo_da_trilha(itens: list[dict], hist: list[dict], cfg: dict) -> dict | None:
+def fichas_ate(fichas: list[dict], n: int) -> list[dict]:
+    return [f for f in fichas if f['etapa'] <= n]
+
+def proximo_da_trilha(itens: list[dict], hist: list[dict], cfg: dict, t: str = 'nativo') -> dict | None:
     """Lições da etapa atual primeiro (na ordem do arquivo), depois puzzles dela."""
-    n = etapa_atual(hist, itens, cfg)
+    n = etapa_atual(hist, itens, cfg, t)
     if l := proxima_licao(licoes_da_etapa(itens, n), hist):
         return l
     ps = puzzles_da_etapa(itens, n)
-    return escolher_puzzle(ps, hist, rating_atual(hist, cfg, 'nativo'), cfg) if ps else None
+    return escolher_puzzle(ps, hist, rating_atual(hist, cfg, t), cfg) if ps else None
 
 def registrar(it: dict, modo: str, res: dict, cfg: dict) -> None:
     resultado = resultado_de(res)
@@ -593,11 +689,11 @@ def registrar(it: dict, modo: str, res: dict, cfg: dict) -> None:
                  'tentativas': res['tentativas'], 'dicas': res['dicas'],
                  'segundos': res['segundos'], 'comandos': len(res['cmds']),
                  'rating_antes': antes, 'rating_depois': depois})
-    append_tentativa({'data_hora': datetime.now().isoformat(timespec='seconds'),
-                      'modo': modo, 'id': it['id'], 'resultado': resultado,
-                      'tentativas': res['tentativas'], 'dicas': res['dicas'],
-                      'tutor': res['tutor'], 'resposta': res['resposta'],
-                      'cmds': res['cmds']})
+    tentativa = {'data_hora': datetime.now().isoformat(timespec='seconds'),
+                 'modo': modo, 'id': it['id'], 'resultado': resultado,
+                 'tentativas': res['tentativas'], 'dicas': res['dicas'],
+                 'tutor': res['tutor'], 'resposta': res['resposta'],
+                 'cmds': res['cmds']}
     rotulo = ROTULO[resultado]
     if resultado == 'ajuda' and not licao:
         rotulo += f" (nota {s:g})"
@@ -618,6 +714,14 @@ def registrar(it: dict, modo: str, res: dict, cfg: dict) -> None:
         print(f"{C['d']}solução de referência:{C['0']}")
         for c in it['solucao'].strip().splitlines():
             print(f"  {C['g']}{c}{C['0']}")
+    # na trilha sistema, escrever o mecanismo é o que fixa (o tutor lê no tentativas.jsonl)
+    if res['ok'] and not licao and cat == 'sistema' and sys.stdin.isatty():
+        try:
+            tentativa['aprendi'] = input(f"\n{C['m']}em uma linha: o que estava por trás disso?{C['0']} "
+                                         f"{C['d']}(Enter pula){C['0']} ").strip()
+        except EOFError:
+            pass
+    append_tentativa(tentativa)
 
 def recalcular(cfg: dict) -> None:
     """Refaz rating_antes/depois do histórico inteiro com a fórmula atual.
@@ -626,7 +730,7 @@ def recalcular(cfg: dict) -> None:
     if not hist:
         print('histórico vazio.')
         return
-    velho = {c: rating_atual(hist, cfg, c) for c in ('livre', 'nativo')}
+    velho = {c: rating_atual(hist, cfg, c) for c in ('livre',) + TRILHAS}
     r = {c: rating_atual([], cfg, c) for c in velho}
     jogos = dict.fromkeys(velho, 0)
     for i, h in enumerate(hist):
@@ -674,35 +778,44 @@ def fichas_faltando(it: dict, tem: list[dict]) -> str:
     falta = [n for n in it['fichas'] if n not in nomes]
     return f"`> fichas:` aponta pra ficha que não existe nessa etapa: {' '.join(falta)}" if falta else ''
 
-def validar(itens: list[dict], cfg: dict | None = None, fichas: list[dict] | None = None) -> int:
+def validar(itens: list[dict], cfg: dict | None = None, fichas: list[dict] | None = None, t: str = '') -> int:
     """Pra cada item: arena crua tem que FALHAR no check; com a solução, PASSAR;
-    e nenhuma dica pode entregar a solução ou a resposta. Na trilha (`cfg`), a
-    solução roda só com o PATH da etapa do item: prova que dá pra resolver ali."""
+    e nenhuma dica pode entregar a solução ou a resposta. Na trilha nativa, a
+    solução roda só com o PATH da etapa do item: prova que dá pra resolver ali.
+    Na sistema, roda travada como o jogador (só escreve na arena)."""
     erros = 0
+    sistema = t == 'sistema'
+    trava = sistema and landlock_abi() > 0
     for it in itens:
+        if falta := falta_requer(it):
+            print(f"  {C['d']}pulado  {it['id']:<16} {it['titulo']} (requer {falta}){C['0']}")
+            continue
         if motivo := dica_entrega(it):
             erros += 1
             print(f"  {C['r']}FALHOU{C['0']}  {it['id']:<16} {it['titulo']}\n       {motivo}")
             continue
-        path = path_da_etapa(cfg, fichas or [], it['etapa']) if cfg else None
-        tem = path['fichas'] if path else fichas or []
+        path = path_da_etapa(cfg, fichas or [], it['etapa']) if t == 'nativo' else None
+        tem = path['fichas'] if path else fichas_ate(fichas, it['etapa']) if sistema else fichas or []
         if motivo := fichas_faltando(it, tem):
             erros += 1
             print(f"  {C['r']}FALHOU{C['0']}  {it['id']:<16} {it['titulo']}\n       {motivo}")
             continue
         raiz, arena, ctl = montar_arena(it, path, tem)
-        env = env_arena(arena, ctl, it['inicio'], bool(path))
+        env = env_arena(arena, ctl, it['inicio'], bool(path), sistema)
+        pre = trava_da(raiz) if trava else None
         chk = [BASH, os.path.join(ctl, 'check.sh')]
         with open(os.path.join(ctl, 'cwd'), 'w') as f:
             f.write(os.path.join(arena, it['inicio']).rstrip('/'))
-        cru = subprocess.run(chk, cwd=arena, env=env, capture_output=True, text=True)
+        cru = subprocess.run(chk, cwd=arena, env=env, capture_output=True, text=True, preexec_fn=pre)
         sol = ('responder() { printf "%s" "$*" > "$XEQUE_CTL/resposta"; }\n'
+               'printf "%s" "$$" > "$XEQUE_CTL/pid"\n'
                f'cd "$XEQUE_ARENA/$XEQUE_INICIO"\n{it["solucao"]}\n'
-               'printf "%s" "$PWD" > "$XEQUE_CTL/cwd"\n')
+               'printf "%s" "$PWD" > "$XEQUE_CTL/cwd"\n'
+               # como o `pronto`: o check é filho do shell ainda vivo (o SHELL_PID tem que existir)
+               f'(cd "$XEQUE_ARENA" && "{BASH}" "$XEQUE_CTL/check.sh")\n')
         with open(os.path.join(ctl, 'hist'), 'w') as f:
             f.write(it['solucao'])
-        rs = subprocess.run([BASH, '-c', sol], cwd=arena, env=env, capture_output=True, text=True)
-        fim = subprocess.run(chk, cwd=arena, env=env, capture_output=True, text=True)
+        fim = subprocess.run([BASH, '-c', sol], cwd=arena, env=env, capture_output=True, text=True, preexec_fn=pre)
         ok = cru.returncode != 0 and fim.returncode == 0
         erros += not ok
         marca = f"{C['g']}ok{C['0']}" if ok else f"{C['r']}FALHOU{C['0']}"
@@ -710,7 +823,7 @@ def validar(itens: list[dict], cfg: dict | None = None, fichas: list[dict] | Non
         if not ok:
             if cru.returncode == 0:
                 print('       arena crua já passa no check')
-            print('       ' + (rs.stderr + fim.stdout + fim.stderr).strip().replace('\n', '\n       '))
+            print('       ' + (fim.stdout + fim.stderr).strip().replace('\n', '\n       '))
         shutil.rmtree(raiz, ignore_errors=True)
     return erros
 
@@ -727,19 +840,23 @@ def faixa(hist: list[dict], cat: str = 'livre') -> str:
     barras = '▁▂▃▄▅▆▇█'
     return ''.join(barras[int((r - lo) / (hi - lo or 1) * 7)] for r in rs)
 
-def linha_trilha(hist: list[dict], nativo: list[dict], cfg: dict) -> str:
-    n = etapa_atual(hist, nativo, cfg)
-    e, d = cfg['trilha'][n - 1], cfg['desbloqueio']
-    prog = (f"{limpos_recentes(hist, nativo, cfg, n)}/{d['limpos']} limpos pra etapa {n + 1}"
-            if n < len(cfg['trilha']) else 'fim da trilha')
-    return f"etapa {n}/{len(cfg['trilha'])} · {e['nome']} ({e['camada']}) · {prog}"
+def linha_trilha(hist: list[dict], itens: list[dict], cfg: dict, t: str = 'nativo') -> str:
+    n = etapa_atual(hist, itens, cfg, t)
+    etapas, d = trilha_cfg(cfg, t)
+    e = etapas[n - 1]
+    prog = (f"{limpos_recentes(hist, itens, cfg, n, t)}/{d['limpos']} limpos pra etapa {n + 1}"
+            if n < len(etapas) else 'fim da trilha')
+    camada = f" ({e['camada']})" if 'camada' in e else ''
+    return f"etapa {n}/{len(etapas)} · {e['nome']}{camada} · {prog}"
 
-def tela_stats(puzzles: list[dict], licoes: list[dict], nativo: list[dict], cfg: dict) -> None:
+def tela_stats(puzzles: list[dict], licoes: list[dict], nativo: list[dict], cfg: dict, sistema: list[dict] = ()) -> None:
     hist = read_hist()
     rn = rating_atual(hist, cfg, 'nativo')
     print(f"\n{C['b']}nativo {rn}{C['0']}  {C['cy']}{faixa(hist, 'nativo')}{C['0']}  {linha_trilha(hist, nativo, cfg)}")
     n = etapa_atual(hist, nativo, cfg)
     print(f"  {C['d']}PATH: {' '.join(cmds_ate(cfg, n))}{C['0']}")
+    rs = rating_atual(hist, cfg, 'sistema')
+    print(f"{C['b']}sistema {rs}{C['0']}  {C['cy']}{faixa(hist, 'sistema')}{C['0']}  {linha_trilha(hist, sistema, cfg, 'sistema')}")
     jog = [h for h in hist if categoria(h['modo']) == 'livre' and h['modo'] not in LICOES]
     r = rating_atual(hist, cfg)
     pico = max([int(h['rating_depois']) for h in jog] or [r])
@@ -765,13 +882,16 @@ def rodar(it: dict, modo: str, cfg: dict, fichas: list[dict] = (), path: dict | 
     res = jogar(it, modo, fichas, path)
     registrar(it, modo, res, cfg)
 
-def anunciar(n: int, cfg: dict, fichas: list[dict]) -> None:
-    """Abertura da etapa: o que entrou no PATH e as fichas novas."""
-    e = cfg['trilha'][n - 1]
-    novos = e['cmds'] + (cfg['sempre'] if n == 1 else [])
-    titulo = 'seu PATH começa com' if n == 1 else 'PATH ganhou'
-    topo = (f"{C['b']}{C['y']}🔓 etapa {n} · {e['nome']}{C['0']}  {C['d']}({e['camada']}){C['0']}  "
-            f"{titulo}: {C['cy']}{' '.join(novos)}{C['0']}\n")
+def anunciar(n: int, cfg: dict, fichas: list[dict], t: str = 'nativo') -> None:
+    """Abertura da etapa: o que entrou no PATH (nativo) ou do que ela trata (sistema) e as fichas novas."""
+    e = trilha_cfg(cfg, t)[0][n - 1]
+    if t == 'nativo':
+        novos = e['cmds'] + (cfg['sempre'] if n == 1 else [])
+        titulo = 'seu PATH começa com' if n == 1 else 'PATH ganhou'
+        topo = (f"{C['b']}{C['y']}🔓 etapa {n} · {e['nome']}{C['0']}  {C['d']}({e['camada']}){C['0']}  "
+                f"{titulo}: {C['cy']}{' '.join(novos)}{C['0']}\n")
+    else:
+        topo = f"{C['b']}{C['y']}🔓 sistema · etapa {n} · {e['nome']}{C['0']}  {C['d']}{e['sobre']}{C['0']}\n"
     print('\n' + topo)
     fs = [f for f in fichas if f['etapa'] == n]
     # sem terminal (teste com stdin em pipe), o input() engoliria os comandos do bash
@@ -808,30 +928,39 @@ def ler_fichas(fs: list[dict], topo: str = '') -> None:
     if falta := sum(f['nome'] not in lidas for f in fs):
         print(f"\n{C['y']}faltam {falta} ficha(s){C['0']} {C['d']}— retome com{C['0']} {C['cy']}xeque ficha{C['0']}")
 
-def loop_trilha(nativo: list[dict], fichas: list[dict], cfg: dict, pid: str | None = None) -> None:
+def loop_trilha(itens: list[dict], fichas: list[dict], cfg: dict, pid: str | None = None, t: str = 'nativo') -> None:
+    if t == 'sistema' and not landlock_abi() and not SEM_TRAVA:
+        print(f"{C['r']}seu kernel não tem landlock{C['0']} — é ele que deixa a trilha sistema ver a máquina\n"
+              f"inteira sem poder estragar nada. Kernel 5.13+ resolve; `xeque sistema --sem-trava` roda sem a trava.")
+        return
+    etapas = trilha_cfg(cfg, t)[0]
     while True:
         hist = read_hist()
-        n = etapa_atual(hist, nativo, cfg)
+        n = etapa_atual(hist, itens, cfg, t)
         if pid:
-            it = next((x for x in nativo if x['id'] == pid), None)
+            it = next((x for x in itens if x['id'] == pid), None)
             if not it:
-                print(f'{pid} não existe na trilha — veja `xeque lista`')
+                print(f'{pid} não existe na trilha (ou essa máquina não tem o que ele pede) — veja `xeque lista`')
                 return
             if it['etapa'] > n:
                 print(f"{pid} é da etapa {it['etapa']}; você está na {n}. Desbloqueie antes.")
                 return
         else:
-            it = proximo_da_trilha(nativo, hist, cfg)
+            it = proximo_da_trilha(itens, hist, cfg, t)
         if not it:
             print(f"\n{C['y']}etapa {n} ainda em construção — peça pro Claude escrever a próxima leva.{C['0']}")
             return
         licao = not it['rating']
-        if licao and it is licoes_da_etapa(nativo, it['etapa'])[0] and not any(h['id'] == it['id'] for h in hist):
-            anunciar(it['etapa'], cfg, fichas)
-        path = path_da_etapa(cfg, fichas, max(n, it['etapa']))
-        rodar(it, 'nativo-licao' if licao else 'nativo', cfg, path['fichas'], path)
-        if (novo := etapa_atual(read_hist(), nativo, cfg)) > n:
-            print(f"\n{C['b']}{C['g']}🔓 desbloqueou a etapa {novo} · {cfg['trilha'][novo - 1]['nome']}!{C['0']}"
+        if licao and it is licoes_da_etapa(itens, it['etapa'])[0] and not any(h['id'] == it['id'] for h in hist):
+            anunciar(it['etapa'], cfg, fichas, t)
+        if t == 'nativo':
+            path = path_da_etapa(cfg, fichas, max(n, it['etapa']))
+            fs = path['fichas']
+        else:
+            path, fs = None, fichas_ate(fichas, max(n, it['etapa']))
+        rodar(it, f'{t}-licao' if licao else t, cfg, fs, path)
+        if (novo := etapa_atual(read_hist(), itens, cfg, t)) > n:
+            print(f"\n{C['b']}{C['g']}🔓 desbloqueou a etapa {novo} · {etapas[novo - 1]['nome']}!{C['0']}"
                   f"  {C['d']}as fichas aparecem na primeira lição dela{C['0']}")
         if pid or not continuar():
             return
@@ -868,10 +997,11 @@ def loop_puzzle(puzzles: list[dict], fichas: list[dict], cfg: dict, pid: str | N
         if pid or not continuar():
             return
 
-def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: list[dict], cfg: dict) -> None:
+def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: list[dict], cfg: dict,
+         sistema: list[dict] = (), fichas_s: list[dict] = ()) -> None:
     while True:
         hist = read_hist()
-        r, rn = rating_atual(hist, cfg), rating_atual(hist, cfg, 'nativo')
+        r, rn, rs = rating_atual(hist, cfg), rating_atual(hist, cfg, 'nativo'), rating_atual(hist, cfg, 'sistema')
         prox = proxima_licao(licoes, hist)
         trilha = proximo_da_trilha(nativo, hist, cfg)
         dia = puzzle_do_dia(puzzles, date.today())
@@ -880,8 +1010,9 @@ def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: li
         feitas = len({h['id'] for h in hist if h['modo'] == 'tutor' and h['resultado'] in ('ok', 'ajuda')})
         pra_ler = len(pendentes(abertas(fichas, hist, nativo, cfg)))
         print(f"\n{C['b']}♞ xeque{C['0']} — puzzles de terminal · 🔥 {ofensiva(hist)} dia(s)")
-        print(f"  nativo {C['b']}{rn}{C['0']} {C['cy']}{faixa(hist, 'nativo')}{C['0']}  {C['d']}{linha_trilha(hist, nativo, cfg)}{C['0']}")
-        print(f"  livre  {C['b']}{r}{C['0']} {C['cy']}{faixa(hist)}{C['0']}  {C['d']}tutor {feitas}/{len(licoes)}{C['0']}\n")
+        print(f"  nativo  {C['b']}{rn}{C['0']} {C['cy']}{faixa(hist, 'nativo')}{C['0']}  {C['d']}{linha_trilha(hist, nativo, cfg)}{C['0']}")
+        print(f"  sistema {C['b']}{rs}{C['0']} {C['cy']}{faixa(hist, 'sistema')}{C['0']}  {C['d']}{linha_trilha(hist, sistema, cfg, 'sistema')}{C['0']}")
+        print(f"  livre   {C['b']}{r}{C['0']} {C['cy']}{faixa(hist)}{C['0']}  {C['d']}tutor {feitas}/{len(licoes)}{C['0']}\n")
         if trilha:
             prox_t = (f"lição {trilha['id']} · {trilha['titulo']}" if not trilha['rating']
                       else f"puzzle (perto de {rn})")
@@ -896,6 +1027,7 @@ def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: li
         print(f"  5  stats")
         print(f"  6  fichas  {C['d']}{f'{pra_ler} pra ler' if pra_ler else 'todas lidas ✓ · relê do começo'}{C['0']}")
         print(f"  7  rever   {C['d']}últimos jogados: reabre lição ou puzzle{C['0']}")
+        print(f"  8  sistema {C['d']}a máquina por dentro: camadas, pastas, processos, boot, rede · `xeque mapa`{C['0']}")
         print(f"  0  sair")
         try:
             op = input('\n> ').strip()
@@ -910,11 +1042,13 @@ def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: li
         elif op == '4':
             rodar(dia, 'dia', cfg, fichas)
         elif op == '5':
-            tela_stats(puzzles, licoes, nativo, cfg)
+            tela_stats(puzzles, licoes, nativo, cfg, sistema)
         elif op == '6':
             tela_fichas(fichas, None, abertas(fichas, hist, nativo, cfg))
         elif op == '7':
-            tela_rever(licoes, puzzles, nativo, fichas, cfg)
+            tela_rever(licoes, puzzles, nativo, fichas, cfg, sistema, fichas_s)
+        elif op == '8':
+            loop_trilha(sistema, fichas_s, cfg, t='sistema')
         elif op in ('0', 'q'):
             return
 
@@ -953,9 +1087,42 @@ def tela_fichas(fichas: list[dict], nome: str | None, abertas: list[dict]) -> No
     else:
         ler_fichas(abertas)
 
-def tela_rever(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: list[dict], cfg: dict) -> None:
+def tela_mapa(fichas_s: list[dict], sistema: list[dict], cfg: dict) -> None:
+    """A árvore desde o /, montada das fichas de pasta: cada linha com o resumo.
+    • = ainda não lida; apagada = de etapa que você ainda não abriu."""
+    n = etapa_atual(read_hist(), sistema, cfg, 'sistema')
+    lidas = fichas_lidas()
+    def partes(nome):
+        return [p for p in nome.split('/') if p]
+    def chave(f):
+        return (f['nome'].startswith('~'), partes(f['nome']))
+    def linha(f, rotulo, fundo):
+        marca = ' ' if f['nome'] in lidas else '•'
+        if f['etapa'] > n:
+            return f"{'  ' * fundo}{C['d']}{marca} {rotulo:<{24 - 2 * fundo}} etapa {f['etapa']} · {f['resumo']}{C['0']}"
+        return f"{'  ' * fundo}{C['b']}{marca}{C['0']} {C['cy']}{rotulo:<{24 - 2 * fundo}}{C['0']} {f['resumo']}"
+    pastas = sorted((f for f in fichas_s if f['nome'][0] in '/~'), key=chave)
+    nomes = {f['nome'] for f in pastas}
+    def caminho(p, casa):
+        return '/'.join(p) if casa else '/' + '/'.join(p)
+    out = [f"{C['b']}♞ mapa do sistema{C['0']}  {C['d']}você está na etapa {n} da trilha sistema{C['0']}\n"]
+    for f in pastas:
+        p, casa = partes(f['nome']), f['nome'].startswith('~')
+        acima = [caminho(p[:i], casa) for i in range(1 if casa else 0, len(p))]
+        fundo = sum(a in nomes for a in acima)  # recua sob as pastas-mãe que têm ficha
+        perto = bool(acima) and acima[-1] in nomes
+        out.append(linha(f, p[-1] if perto else f['nome'], fundo))
+    conceitos = [f for f in fichas_s if f['nome'][0] not in '/~']
+    if conceitos:
+        out.append(f"\n{C['b']}conceitos{C['0']}")
+        out += [linha(f, f['nome'], 0) for f in sorted(conceitos, key=lambda f: f['etapa'])]
+    out.append(f"\n{C['d']}• = ainda não lida · xeque ficha /etc abre uma · na arena: ficha /etc{C['0']}")
+    paginar('\n'.join(out))
+
+def tela_rever(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: list[dict], cfg: dict,
+               sistema: list[dict] = (), fichas_s: list[dict] = ()) -> None:
     """Os últimos itens jogados, do mais recente; o número reabre."""
-    titulos = {i['id']: i['titulo'] for i in licoes + puzzles + nativo}
+    titulos = {i['id']: i['titulo'] for i in licoes + puzzles + nativo + list(sistema)}
     recentes: dict[str, dict] = {}
     for h in reversed(read_hist()):
         recentes.setdefault(comando_de(h['modo'], h['id']), h)
@@ -978,6 +1145,8 @@ def tela_rever(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fich
     sub = cmd.split()[1]
     if sub == 'trilha':
         loop_trilha(nativo, fichas, cfg, h['id'])
+    elif sub == 'sistema':
+        loop_trilha(sistema, fichas_s, cfg, h['id'], 'sistema')
     elif sub == 'tutor':
         loop_tutor(licoes, fichas, cfg, h['id'])
     else:
@@ -993,6 +1162,8 @@ def atualizar() -> None:
     subprocess.run(['git', '-C', DATA_DIR, '--no-pager', 'log', '--oneline', f'{antes}..HEAD'])
     print(f"{C['g']}xeque atualizado.{C['0']}")
 
+SEM_TRAVA = '--sem-trava' in sys.argv  # kernel sem landlock: a trilha sistema roda sem a trava
+
 def main() -> None:
     migrar_pessoal()
     cfg = carregar_cfg()
@@ -1000,11 +1171,18 @@ def main() -> None:
     puzzles = carregar_itens(cfg, 'puzzles')
     nativo = carregar_itens(cfg, 'nativo')
     fichas = parse_fichas(cfg['fichas'])
-    a = sys.argv[1:]
+    sistema_todos = carregar_itens(cfg, 'sistema')
+    sistema = [i for i in sistema_todos if not falta_requer(i)]  # só o que essa máquina tem
+    fichas_s = parse_fichas(cfg['fichas_sistema'])
+    a = [x for x in sys.argv[1:] if x != '--sem-trava']
     cmd = a[0] if a else ''
     arg = a[1] if len(a) > 1 else None
     if cmd == 'trilha':
         loop_trilha(nativo, fichas, cfg, arg)
+    elif cmd == 'sistema':
+        loop_trilha(sistema, fichas_s, cfg, arg, 'sistema')
+    elif cmd == 'mapa':
+        tela_mapa(fichas_s, sistema, cfg)
     elif cmd == 'tutor':
         loop_tutor(licoes, fichas, cfg, arg)
     elif cmd == 'puzzle':
@@ -1012,11 +1190,12 @@ def main() -> None:
     elif cmd == 'dia':
         rodar(puzzle_do_dia(puzzles, date.today()), 'dia', cfg, fichas)
     elif cmd == 'stats':
-        tela_stats(puzzles, licoes, nativo, cfg)
-    elif cmd == 'ficha':
-        tela_fichas(fichas, arg, abertas(fichas, read_hist(), nativo, cfg))
+        tela_stats(puzzles, licoes, nativo, cfg, sistema)
+    elif cmd == 'ficha':  # o leitor e a lista são da trilha nativa; pelo nome, vale ficha de pasta também
+        tela_fichas(fichas if arg in (None, 'lista') else fichas + fichas_s, arg,
+                    abertas(fichas, read_hist(), nativo, cfg))
     elif cmd == 'rever':
-        tela_rever(licoes, puzzles, nativo, fichas, cfg)
+        tela_rever(licoes, puzzles, nativo, fichas, cfg, sistema, fichas_s)
     elif cmd == 'lista':
         for n, e in enumerate(cfg['trilha'], 1):
             itens = [i for i in nativo if i['etapa'] == n]
@@ -1024,6 +1203,13 @@ def main() -> None:
                 print(f"  {C['b']}trilha {n} · {e['nome']}{C['0']}  {C['d']}{' '.join(e['cmds'])}{C['0']}")
             for i in itens:
                 print(f"    {i['id']:<10} {i['rating'] or '':>4}  {i['titulo']}")
+        for n, e in enumerate(cfg['trilha_sistema'], 1):
+            itens = [i for i in sistema_todos if i['etapa'] == n]
+            if itens:
+                print(f"  {C['b']}sistema {n} · {e['nome']}{C['0']}  {C['d']}{e['sobre']}{C['0']}")
+            for i in itens:
+                falta = f"  {C['d']}(essa máquina não tem {falta_requer(i)}){C['0']}" if falta_requer(i) else ''
+                print(f"    {i['id']:<10} {i['rating'] or '':>4}  {i['titulo']}{falta}")
         print(f"  {C['b']}livre{C['0']}")
         for l in licoes:
             print(f"  tutor {l['id']:<6}      {l['titulo']}")
@@ -1035,21 +1221,25 @@ def main() -> None:
         atualizar()
     elif cmd == 'validar':
         e = 0
-        for n in range(1, len(cfg['trilha']) + 1):
-            ps = puzzles_da_etapa(nativo, n)
-            if ps and len(ps) < cfg['desbloqueio']['limpos']:
-                e += 1
-                print(f"  {C['r']}FALHOU{C['0']}  etapa {n} tem {len(ps)} puzzles; desbloquear pede {cfg['desbloqueio']['limpos']} diferentes")
-        for i in nativo:
-            if not i['etapa'] or i['etapa'] > len(cfg['trilha']):
-                e += 1
-                print(f"  {C['r']}FALHOU{C['0']}  {i['id']} sem `> etapa:` válida")
-        for fi in fichas:
+        for t, itens in (('nativo', nativo), ('sistema', sistema_todos)):
+            etapas, regra = trilha_cfg(cfg, t)
+            for n in range(1, len(etapas) + 1):
+                ps = puzzles_da_etapa(itens, n)
+                if ps and len(ps) < regra['limpos']:
+                    e += 1
+                    print(f"  {C['r']}FALHOU{C['0']}  {t} etapa {n} tem {len(ps)} puzzles; desbloquear pede {regra['limpos']} diferentes")
+            for i in itens:
+                if not i['etapa'] or i['etapa'] > len(etapas):
+                    e += 1
+                    print(f"  {C['r']}FALHOU{C['0']}  {i['id']} sem `> etapa:` válida")
+        for fi in fichas + fichas_s:
             if not fi['resumo'] or not re.search(r'^\s+cuidado\b', fi['texto'], flags=re.M):
                 e += 1
                 print(f"  {C['r']}FALHOU{C['0']}  ficha {fi['nome']} sem `> resumo:` ou sem linha `cuidado`")
         print(f"{C['b']}trilha{C['0']}")
-        e += validar([i for i in nativo if i['etapa']], cfg, fichas)
+        e += validar([i for i in nativo if i['etapa']], cfg, fichas, 'nativo')
+        print(f"{C['b']}sistema{C['0']}" + ('' if landlock_abi() else f"  {C['y']}(sem landlock: roda destravado){C['0']}"))
+        e += validar([i for i in sistema_todos if i['etapa']], cfg, fichas_s, 'sistema')
         print(f"{C['b']}lições{C['0']}")
         e += validar(licoes, fichas=fichas)
         print(f"{C['b']}puzzles{C['0']}")
@@ -1057,9 +1247,10 @@ def main() -> None:
         print(f"\n{e} falha(s)")
         sys.exit(1 if e else 0)
     elif cmd in ('', 'menu'):
-        menu(licoes, puzzles, nativo, fichas, cfg)
+        menu(licoes, puzzles, nativo, fichas, cfg, sistema, fichas_s)
     else:
-        print('uso: xeque [trilha [ID] | tutor [N] | puzzle [ID] | dia | stats | ficha [NOME|lista] | rever | lista | atualizar | recalcular | validar]')
+        print('uso: xeque [trilha [ID] | sistema [ID] | mapa | tutor [N] | puzzle [ID] | dia | stats | '
+              'ficha [NOME|lista] | rever | lista | atualizar | recalcular | validar]')
 
 if __name__ == '__main__':
     try:

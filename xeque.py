@@ -260,6 +260,15 @@ type -P grep >/dev/null && alias grep='grep --color=auto'
 history -r "$XEQUE_SHELLHIST" 2>/dev/null
 HISTFILE="$XEQUE_CTL/hist"; HISTSIZE=2000; PROMPT_COMMAND='history -a'
 PS1='\[\e[1;33m\]♞\[\e[0m\] \[\e[36m\]\w\[\e[0m\] \$ '
+# Modo vi na linha (`set -o vi`): Alt+E liga e desliga, e o prompt mostra o
+# modo — (ins) digitando, (cmd) no normal; no modo padrão não aparece nada.
+bind 'set show-mode-in-prompt on'
+bind 'set emacs-mode-string ""'
+bind 'set vi-ins-mode-string "\1\e[2m\2(ins)\1\e[0m\2 "'
+bind 'set vi-cmd-mode-string "\1\e[1;35m\2(cmd)\1\e[0m\2 "'
+bind -m emacs-standard '"\ee": vi-editing-mode'
+bind -m vi-insert '"\ee": emacs-editing-mode'
+bind -m vi-command '"\ee": emacs-editing-mode'
 # Os comandos do xeque rodam com o PATH completo: na trilha, o seu PATH
 # só tem o que você desbloqueou, e o `pronto` não pode depender disso.
 _xq() { PATH="$XEQUE_PATH_REAL" "$@"; }

@@ -616,7 +616,9 @@ def nota(resultado: str, tentativas: int, dicas: int, cfg: dict) -> float:
 
 def ja_viu(hist: list[dict], pid: str) -> bool:
     """Já resolveu ou viu a solução: repetir vale menos. Abandonou não conta (a solução ficou escondida)."""
-    return any(h['modo'] not in LICOES and h['id'] == pid and h['resultado'] in ('ok', 'ajuda', 'desistiu')
+    return any(h['modo'] not in LICOES
+               and h['id'] == pid
+               and h['resultado'] in ('ok', 'ajuda', 'desistiu')
                for h in hist)
 
 def resultado_de(res: dict) -> str:

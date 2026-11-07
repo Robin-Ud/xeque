@@ -66,6 +66,10 @@ Item é pergunta se o check chama `resp*`.
   estável (o histórico e os temas apontam pelo id). Mudou o base → `validar` sem
   o pessoal/configs.json (é o que o `xeque_test.sh` faz) e com ele (o tema mesclado).
 - Commit com o e-mail noreply do GitHub (configurado no repo), nunca o gmail.
+  Padrão de mensagem no `~/.claude/CLAUDE.md` (Conventional Commits). Escopos:
+  `arena`, `check`, `rating`, `trilha`, `sistema`, `curiosidades`, `fichas`, `menu`,
+  `instalador`, `readme`; conteúdo é `content(nativo|puzzles|licoes|sistema|fichas|curiosidades)`.
+  O `git log --oneline` é o changelog que o `xeque atualizar` mostra pros amigos.
 - HOME=arena dentro do shell; XDG_* continuam na home real (nvim/bat com config).
 - `ctl/tutor` existe → o Claude ajudou no meio; conta como +1 dica.
 - Rating: score = `nota()` (ok 1, ajuda parcial, resto 0), pesos em configs.json.

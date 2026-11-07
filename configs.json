@@ -16,6 +16,7 @@
   "rating_inicial_nativo": 400,
   "sistema": "sistema.md",
   "fichas_sistema": "fichas_sistema.md",
+  "curiosidades": "curiosidades.md",
   "rating_inicial_sistema": 400,
   "desbloqueio_sistema": {"limpos": 4, "janela": 6},
   "desbloqueio": {"limpos": 5, "janela": 7},

@@ -34,6 +34,8 @@ SHELL_HIST_NATIVO = os.path.join(PESSOAL, 'shell_hist_nativo')
 SHELL_HIST_MAX = 2000
 # Fichas que você já passou no leitor ou abriu pelo nome: o leitor retoma da primeira que falta.
 FICHAS_LIDAS = os.path.join(PESSOAL, 'fichas_lidas.txt')
+# Curiosidades que já te apareceram (append-only, um id por linha).
+CURIOSIDADES_VISTAS = os.path.join(PESSOAL, 'curiosidades_vistas.txt')
 CAMPOS = ['data_hora', 'modo', 'id', 'rating_item', 'resultado', 'tentativas',
           'dicas', 'segundos', 'comandos', 'rating_antes', 'rating_depois']
 META_CMDS = {'pronto', 'dica', 'meta', 'reset', 'desisto', 'responder', 'ficha', 'exit'}
@@ -111,6 +113,18 @@ def marcar_lida(nome: str) -> None:
     if nome not in fichas_lidas():
         with open(FICHAS_LIDAS, 'a', encoding='utf-8') as f:
             f.write(nome + '\n')
+
+def curiosidades_vistas() -> set[str]:
+    try:
+        with open(CURIOSIDADES_VISTAS, encoding='utf-8') as f:
+            return set(f.read().split())
+    except FileNotFoundError:
+        return set()
+
+def marcar_vista(cid: str) -> None:
+    if cid not in curiosidades_vistas():
+        with open(CURIOSIDADES_VISTAS, 'a', encoding='utf-8') as f:
+            f.write(cid + '\n')
 
 def parse_itens(name: str) -> list[dict]:
     """Lê licoes.md / puzzles.md. Cada item começa com '## id · [rating ·] título'."""
@@ -192,6 +206,22 @@ def parse_fichas(name: str) -> list[dict]:
                        'etapa': int(campos.get('etapa', 1)), 'resumo': campos.get('resumo', ''),
                        'texto': re.sub(r'^> \w+:.*\n?', '', corpo, flags=re.M).strip()})
     return fichas
+
+def parse_curiosidades(name: str) -> list[dict]:
+    """curiosidades.md: '## id · onde · título', '> tente: ...' (obrigatório),
+    '> requer: a|b, c' (opcional, igual à trilha sistema) e o texto."""
+    with open(os.path.join(DATA_DIR, name), encoding='utf-8') as f:
+        texto = f.read()
+    cs = []
+    for bloco in re.split(r'^## ', texto, flags=re.M)[1:]:
+        cab, _, corpo = bloco.partition('\n')
+        partes = [p.strip() for p in cab.split('·')]
+        campos = dict(re.findall(r'^> (\w+): ?(.*)$', corpo, flags=re.M))
+        cs.append({'id': partes[0], 'onde': partes[1] if len(partes) > 2 else '',
+                   'titulo': partes[-1], 'tente': campos.get('tente', ''),
+                   'requer': [t.strip() for t in campos.get('requer', '').split(',') if t.strip()],
+                   'texto': re.sub(r'^> \w+:.*\n?', '', corpo, flags=re.M).strip()})
+    return cs
 
 
 # ==========================================
@@ -998,7 +1028,7 @@ def loop_puzzle(puzzles: list[dict], fichas: list[dict], cfg: dict, pid: str | N
             return
 
 def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: list[dict], cfg: dict,
-         sistema: list[dict] = (), fichas_s: list[dict] = ()) -> None:
+         sistema: list[dict] = (), fichas_s: list[dict] = (), curios: list[dict] = ()) -> None:
     while True:
         hist = read_hist()
         r, rn, rs = rating_atual(hist, cfg), rating_atual(hist, cfg, 'nativo'), rating_atual(hist, cfg, 'sistema')
@@ -1028,6 +1058,8 @@ def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: li
         print(f"  6  fichas  {C['d']}{f'{pra_ler} pra ler' if pra_ler else 'todas lidas ✓ · relê do começo'}{C['0']}")
         print(f"  7  rever   {C['d']}últimos jogados: reabre lição ou puzzle{C['0']}")
         print(f"  8  sistema {C['d']}a máquina por dentro: camadas, pastas, processos, boot, rede · `xeque mapa`{C['0']}")
+        cur = curiosidade_do_dia(curios, curiosidades_vistas(), date.today()) if curios else None
+        print(f"  9  curiosidade {C['d']}{'💡 ' + cur['titulo'] if cur else 'viu todas ✓ · `xeque curiosidade lista`'}{C['0']}")
         print(f"  0  sair")
         try:
             op = input('\n> ').strip()
@@ -1049,6 +1081,8 @@ def menu(licoes: list[dict], puzzles: list[dict], nativo: list[dict], fichas: li
             tela_rever(licoes, puzzles, nativo, fichas, cfg, sistema, fichas_s)
         elif op == '8':
             loop_trilha(sistema, fichas_s, cfg, t='sistema')
+        elif op == '9':
+            tela_curiosidade(curios)
         elif op in ('0', 'q'):
             return
 
@@ -1086,6 +1120,48 @@ def tela_fichas(fichas: list[dict], nome: str | None, abertas: list[dict]) -> No
         marcar_lida(nome)
     else:
         ler_fichas(abertas)
+
+def curiosidade_do_dia(cs: list[dict], vistas: set[str], dia: date) -> dict | None:
+    """Uma das que você ainda não viu, sorteada pelo dia: o menu e o `xeque
+    curiosidade` mostram a mesma até você ver. None = viu todas."""
+    falta = [c for c in cs if c['id'] not in vistas]
+    return random.Random(dia.toordinal()).choice(falta) if falta else None
+
+def render_curiosidade(c: dict) -> str:
+    onde = f" {C['d']}· {c['onde']}{C['0']}" if c['onde'] else ''
+    return (f"{C['b']}💡 {c['titulo']}{C['0']}{onde}\n\n{render(c['texto'])}\n\n"
+            f"{C['b']}{C['y']}TENTE:{C['0']} {render(c['tente'])}\n")
+
+def tela_curiosidade(cs: list[dict], arg: str | None = None) -> None:
+    """Sem arg: a do dia, e Enter traz outra que você não viu. `lista`: todas por
+    ferramenta. ID: aquela. Ver = marcar vista (não tem rating nem acerto)."""
+    if arg == 'lista':
+        vistas = curiosidades_vistas()
+        for onde in dict.fromkeys(c['onde'] for c in cs):
+            print(f"\n  {C['b']}{onde}{C['0']}")
+            for c in (c for c in cs if c['onde'] == onde):
+                marca = ' ' if c['id'] in vistas else f"{C['b']}•{C['0']}"
+                print(f"  {marca} {c['id']:<14} {C['d']}{c['titulo']}{C['0']}")
+        print(f"\n  {C['d']}• = ainda não vista · xeque curiosidade ID abre uma{C['0']}")
+        return
+    if arg:
+        c = next((c for c in cs if c['id'] == arg), None)
+        if not c:
+            print(f'sem curiosidade {arg} — veja `xeque curiosidade lista`')
+            return
+        print(render_curiosidade(c))
+        marcar_vista(c['id'])
+        return
+    c = curiosidade_do_dia(cs, curiosidades_vistas(), date.today())
+    while c:
+        print('\n' + render_curiosidade(c))
+        marcar_vista(c['id'])
+        vistas = curiosidades_vistas()
+        falta = [x for x in cs if x['id'] not in vistas]
+        if not falta or not continuar(f'outra? [Enter / q] · faltam {len(falta)}'):
+            return
+        c = random.choice(falta)
+    print(f"{C['g']}viu todas as {len(cs)} ✓{C['0']} {C['d']}— xeque curiosidade lista · ou ID pra rever uma{C['0']}")
 
 def tela_mapa(fichas_s: list[dict], sistema: list[dict], cfg: dict) -> None:
     """A árvore desde o /, montada das fichas de pasta: cada linha com o resumo.
@@ -1174,6 +1250,8 @@ def main() -> None:
     sistema_todos = carregar_itens(cfg, 'sistema')
     sistema = [i for i in sistema_todos if not falta_requer(i)]  # só o que essa máquina tem
     fichas_s = parse_fichas(cfg['fichas_sistema'])
+    curios_todas = parse_curiosidades(cfg.get('curiosidades', 'curiosidades.md'))
+    curios = [c for c in curios_todas if not falta_requer(c)]  # some o que essa máquina não tem
     a = [x for x in sys.argv[1:] if x != '--sem-trava']
     cmd = a[0] if a else ''
     arg = a[1] if len(a) > 1 else None
@@ -1183,6 +1261,8 @@ def main() -> None:
         loop_trilha(sistema, fichas_s, cfg, arg, 'sistema')
     elif cmd == 'mapa':
         tela_mapa(fichas_s, sistema, cfg)
+    elif cmd in ('curiosidade', 'curiosidades', 'cur'):
+        tela_curiosidade(curios, arg)
     elif cmd == 'tutor':
         loop_tutor(licoes, fichas, cfg, arg)
     elif cmd == 'puzzle':
@@ -1236,6 +1316,11 @@ def main() -> None:
             if not fi['resumo'] or not re.search(r'^\s+cuidado\b', fi['texto'], flags=re.M):
                 e += 1
                 print(f"  {C['r']}FALHOU{C['0']}  ficha {fi['nome']} sem `> resumo:` ou sem linha `cuidado`")
+        ids = [c['id'] for c in curios_todas]
+        for c in curios_todas:
+            if not c['tente'] or not c['onde'] or ids.count(c['id']) > 1:
+                e += 1
+                print(f"  {C['r']}FALHOU{C['0']}  curiosidade {c['id']} sem `> tente:`, sem onde no título ou id repetido")
         print(f"{C['b']}trilha{C['0']}")
         e += validar([i for i in nativo if i['etapa']], cfg, fichas, 'nativo')
         print(f"{C['b']}sistema{C['0']}" + ('' if landlock_abi() else f"  {C['y']}(sem landlock: roda destravado){C['0']}"))
@@ -1247,10 +1332,10 @@ def main() -> None:
         print(f"\n{e} falha(s)")
         sys.exit(1 if e else 0)
     elif cmd in ('', 'menu'):
-        menu(licoes, puzzles, nativo, fichas, cfg, sistema, fichas_s)
+        menu(licoes, puzzles, nativo, fichas, cfg, sistema, fichas_s, curios)
     else:
         print('uso: xeque [trilha [ID] | sistema [ID] | mapa | tutor [N] | puzzle [ID] | dia | stats | '
-              'ficha [NOME|lista] | rever | lista | atualizar | recalcular | validar]')
+              'ficha [NOME|lista] | curiosidade [ID|lista] | rever | lista | atualizar | recalcular | validar]')
 
 if __name__ == '__main__':
     try:

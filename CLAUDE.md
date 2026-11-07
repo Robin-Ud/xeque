@@ -20,6 +20,7 @@ nativo.md       ← trilha (nativo): lições e puzzles com `> etapa: N`
 sistema.md      ← trilha sistema: igual, + `> tipo:`, `> requer:`, `> sem:`
 fichas_sistema.md ← fichas de pasta (`## /etc`), arquivo e conceito; viram o `xeque mapa`
 fichas.md       ← `## cmd · ano`, `> etapa: N`, `> resumo:`: história + camadas + cuidado
+curiosidades.md ← `## id · onde · título`, `> tente:` (obrigatório), `> requer:`; sem rating, uma por dia (item 9)
 configs.json    ← vai pro git; pessoal/configs.json vai por cima (`carregar_cfg`)
 pessoal/        ← fora do git, tudo de quem joga (no note do Matheus é symlink do stow pro ~/.pessoal);
                   `migrar_pessoal` traz o estado solto na raiz das instalações antigas
@@ -28,6 +29,7 @@ pessoal/        ← fora do git, tudo de quem joga (no note do Matheus é symlin
   atual.json      ← só existe com puzzle aberto: id, arena, ctl (o tutor lê)
   shell_hist      ← ↑ entre puzzles (últimos 2000); só memória, ctl/hist segue limpo
   shell_hist_nativo ← idem, só da trilha (pra ↑ não sugerir tree/bat)
+  curiosidades_vistas.txt ← append-only; a vista não volta no sorteio do dia
   fichas_lidas.txt ← append-only; ficha passada no leitor ou aberta pelo nome (`xeque ficha` retoma da 1ª que falta)
   configs.json    ← ajustes locais (era configs.local.json na raiz)
   tema/           ← itens com o mesmo id trocam os do base (`carregar_itens`); caminho relativo ao pessoal/
@@ -82,6 +84,9 @@ Item é pergunta se o check chama `resp*`.
   `> resumo:` de uma linha e uma linha `cuidado` (quando NÃO usar). O `validar`
   cobra resumo, cuidado, e que a lição só aponte ficha que existe na etapa dela.
   No livre todas as fichas valem; na trilha, só as das etapas 1..N.
+- Curiosidade: atalho/truque **conferido** na ferramenta (ble.sh e readline puro, kitty, less, vim);
+  ferramenta que nem todo mundo usa leva `> requer:` (some se não tiver). Nada de atalho remapeado
+  por config pessoal: só o padrão da ferramenta.
 - Puzzle que exige ferramenta (`usou`) tem que dizer a regra no enunciado ("sem loop").
 
 ## Trilha sistema

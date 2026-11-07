@@ -44,6 +44,8 @@ xeque ficha        # leitor: retoma da primeira ficha não lida (Enter · v volt
 xeque ficha cmd    # uma ficha (história e camadas POSIX/GNU/Mac), com pager
 xeque ficha /etc   # ficha de pasta (o que é, Fedora × Mint, cuidado)
 xeque ficha lista  # todas por etapa, • nas não lidas
+xeque curiosidade  # um atalho/truque que você não conhece (Alt+., Ctrl+X Ctrl+E, less, kitty…); Enter traz outro
+xeque curiosidade lista  # todas, • nas não vistas
 xeque tutor        # continua de onde parou (xeque tutor 7 → lição 07)
 xeque puzzle       # puzzle perto do seu rating; Enter pro próximo
 xeque puzzle p-du  # um puzzle específico

@@ -2,7 +2,7 @@
 # Teste isolado em /tmp — o historico.csv real não é tocado.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DIR="$(mktemp -d /tmp/xeque_test.XXXXXX)"
-cp "$SCRIPT_DIR"/{xeque.py,configs.json,licoes.md,puzzles.md,nativo.md,fichas.md,sistema.md,fichas_sistema.md} "$TEST_DIR/"
+cp "$SCRIPT_DIR"/{xeque.py,configs.json,licoes.md,puzzles.md,nativo.md,fichas.md,sistema.md,fichas_sistema.md,curiosidades.md} "$TEST_DIR/"
 cd "$TEST_DIR" || exit 1
 falhas=0
 # arenas de um xeque aberto em outro terminal não contam como sobra do teste
@@ -193,6 +193,24 @@ shutil.rmtree(raiz)
 ' && ok "requer pula o que falta; sem: vira impostor e nao_usou reprova" || nok "requer / sem"
 python3 xeque.py mapa | grep -q 'os-release' && ok "mapa mostra as fichas de pasta" || nok "mapa"
 python3 xeque.py ficha /etc/os-release | grep -q 'Cada distro tinha' && ok "xeque ficha /caminho acha ficha de pasta" || nok "xeque ficha /etc/os-release"
+
+echo; echo "--- 7. curiosidades: uma por dia, vista não volta, requer esconde"
+c1=$(python3 xeque.py curiosidade </dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -m1 '💡')
+[ -n "$c1" ] && [ "$(wc -l < pessoal/curiosidades_vistas.txt)" -eq 1 ] && ok "mostra uma e marca vista: ${c1#💡 }" || nok "curiosidade do dia"
+c2=$(python3 xeque.py curiosidade </dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -m1 '💡')
+[ -n "$c2" ] && [ "$c2" != "$c1" ] && ok "a vista não volta no mesmo dia" || nok "repetiu a curiosidade vista"
+printf '\n\n' | python3 xeque.py curiosidade >/dev/null
+[ "$(wc -l < pessoal/curiosidades_vistas.txt)" -eq 5 ] && ok "Enter traz outra (5 vistas)" || nok "Enter devia trazer outra"
+python3 xeque.py curiosidade alt-ponto | grep -q 'TENTE' && ok "curiosidade ID abre uma" || nok "curiosidade ID"
+python3 -c '
+import xeque as x
+cs = [{"id": "a", "requer": ["comando-que-nao-existe-xq"]}, {"id": "b", "requer": []}]
+assert [c["id"] for c in cs if not x.falta_requer(c)] == ["b"]
+from datetime import date
+todas = x.parse_curiosidades("curiosidades.md")
+assert x.curiosidade_do_dia(todas, set(), date(2026, 1, 1)) == x.curiosidade_do_dia(todas, set(), date(2026, 1, 1))
+assert x.curiosidade_do_dia(todas, {c["id"] for c in todas}, date.today()) is None
+' && ok "requer esconde; sorteio estável no dia; None quando viu todas" || nok "curiosidade_do_dia / requer"
 
 echo
 cd / && rm -rf "$TEST_DIR"

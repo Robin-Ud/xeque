@@ -73,7 +73,7 @@ Item é pergunta se o check chama `resp*`.
 - HOME=arena dentro do shell; XDG_* continuam na home real (nvim/bat com config).
 - `ctl/tutor` existe → o Claude ajudou no meio; conta como +1 dica.
 - Rating: score = `nota()` (ok 1, ajuda parcial, resto 0), pesos em configs.json.
-  Repetido (`ja_viu`: já fez ok/ajuda/desistiu) → K × `peso_repeticao` se ganhou,
+  Repetido (`ja_desfecho`: já fez ok/ajuda/desistiu) → K × `peso_repeticao` se ganhou,
   × `peso_repeticao_perda` se perdeu.
 - Não ensinar alias que substitui comando clássico (rg≠grep, fd≠find).
 - Duas categorias, Elo separado: `categoria(modo)` → `nativo` (modos `nativo`,

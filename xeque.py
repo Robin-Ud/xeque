@@ -614,11 +614,12 @@ def nota(resultado: str, tentativas: int, dicas: int, cfg: dict) -> float:
         return max(cfg['nota_minima'], round(n, 2))
     return 0.0  # desistiu / abandonou
 
-def ja_viu(hist: list[dict], pid: str) -> bool:
-    """Já resolveu ou viu a solução: repetir vale menos. Abandonou não conta (a solução ficou escondida)."""
+def ja_desfecho(hist: list[dict], pid: str, opts: tuple) -> bool:
+    """Valida com base em uma tupla de opções se já houve registro
+    de algum desses desfechos ou não."""
     return any(h['modo'] not in LICOES
                and h['id'] == pid
-               and h['resultado'] in ('ok', 'ajuda', 'desistiu')
+               and h['resultado'] in opts
                for h in hist)
 
 def resultado_de(res: dict) -> str:
@@ -710,7 +711,7 @@ def registrar(it: dict, modo: str, res: dict, cfg: dict) -> None:
     antes = depois = ''
     s = nota(resultado, res['tentativas'], res['dicas'], cfg)
     licao = modo in LICOES
-    repetido = not licao and ja_viu(hist, it['id'])
+    repetido = not licao and ja_desfecho(hist, it['id'], ('ok', 'ajuda', 'desistiu'))
     if not licao:
         cat = categoria(modo)
         jogos = sum(1 for h in hist if h['rating_depois'] and categoria(h['modo']) == cat)
@@ -771,7 +772,7 @@ def recalcular(cfg: dict) -> None:
         c = categoria(h['modo'])
         s = nota(h['resultado'], int(h['tentativas']), int(h['dicas']), cfg)
         h['rating_antes'] = r[c]
-        r[c] = novo_rating(r[c], int(h['rating_item']), s, jogos[c], cfg, ja_viu(hist[:i], h['id']))
+        r[c] = novo_rating(r[c], int(h['rating_item']), s, jogos[c], cfg, ja_desfecho(hist[:i], h['id'], ('ok', 'ajuda', 'desistiu')))
         h['rating_depois'] = r[c]
         jogos[c] += 1
     shutil.copy2(HIST_CSV, HIST_CSV + '.bak')
